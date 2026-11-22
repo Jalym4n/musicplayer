@@ -1,0 +1,113 @@
+"""User settings and token storage, kept in the OS's normal app-config folder."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+APP_NAME = "Pinkie Player"
+APP_SLUG = "pinkie-player"
+
+REDIRECT_PORT = 8898
+REDIRECT_URI = f"http://127.0.0.1:{REDIRECT_PORT}/callback"
+
+SCOPES = [
+    "user-read-playback-state",
+    "user-modify-playback-state",
+    "user-read-currently-playing",
+    "playlist-read-private",
+    "playlist-read-collaborative",
+    "user-library-read",
+    "user-read-recently-played",
+]
+
+
+def config_dir() -> Path:
+    """Per-user config folder: %APPDATA% on Windows, ~/Library/Application Support on
+    macOS, $XDG_CONFIG_HOME or ~/.config elsewhere."""
+    override = os.environ.get("PINKIE_CONFIG_DIR")
+    if override:
+        base = Path(override)
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / APP_NAME
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / APP_NAME
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_SLUG
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def cache_dir() -> Path:
+    d = config_dir() / "cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@dataclass
+class Settings:
+    client_id: str = ""
+    # Optional: path to a librespot binary so the app can be its own speaker.
+    librespot_path: str = ""
+    librespot_autostart: bool = True
+    device_name: str = APP_NAME
+    preferred_device_id: str = ""
+    poll_seconds: float = 2.5
+    extra: dict = field(default_factory=dict)
+
+    @classmethod
+    def path(cls) -> Path:
+        return config_dir() / "settings.json"
+
+    @classmethod
+    def load(cls) -> "Settings":
+        p = cls.path()
+        if not p.exists():
+            return cls()
+        try:
+            data = json.loads(p.read_text("utf-8"))
+        except (OSError, ValueError):
+            return cls()
+        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**known)
+
+    def save(self) -> None:
+        _write_private(self.path(), json.dumps(asdict(self), indent=2))
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Write a file readable only by the current user (tokens live here)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, "utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def token_path() -> Path:
+    return config_dir() / "token.json"
+
+
+def load_token() -> dict | None:
+    p = token_path()
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def save_token(token: dict) -> None:
+    _write_private(token_path(), json.dumps(token, indent=2))
+
+
+def clear_token() -> None:
+    try:
+        token_path().unlink()
+    except FileNotFoundError:
+        pass

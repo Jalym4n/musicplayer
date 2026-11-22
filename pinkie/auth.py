@@ -10,6 +10,7 @@ import base64
 import hashlib
 import http.server
 import secrets
+import socketserver
 import threading
 import time
 import urllib.parse
@@ -37,6 +38,18 @@ def _pkce_pair() -> tuple[str, str]:
 _DONE_PAGE = """<!doctype html><meta charset="utf-8"><title>Pinkie Player</title>
 <body style="background:#ffd6e8;font-family:monospace;color:#6b2d5c;text-align:center;padding-top:15vh">
 <h1>&#9825; {title} &#9825;</h1><p>{body}</p></body>"""
+
+
+class _LoopbackServer(http.server.HTTPServer):
+    """HTTPServer without the reverse-DNS lookup in server_bind().
+
+    The stock version calls socket.getfqdn(), which can stall for 30s+ on macOS before
+    the socket starts listening, so Spotify's redirect would arrive too early.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def _wait_for_code(state: str, timeout: float) -> str:
@@ -73,7 +86,7 @@ def _wait_for_code(state: str, timeout: float) -> str:
             pass
 
     try:
-        server = http.server.HTTPServer(("127.0.0.1", config.REDIRECT_PORT), Handler)
+        server = _LoopbackServer(("127.0.0.1", config.REDIRECT_PORT), Handler)
     except OSError as exc:
         raise AuthError(
             f"Port {config.REDIRECT_PORT} is busy. Close whatever is using it and try again."

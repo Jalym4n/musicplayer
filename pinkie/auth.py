@@ -144,6 +144,10 @@ class TokenManager:
                 self._refresh()
             return self._token["access_token"]
 
+    @property
+    def scope(self) -> str:
+        return self._token.get("scope", "")
+
     def force_refresh(self) -> None:
         with self._lock:
             self._refresh()

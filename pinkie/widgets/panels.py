@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import theme
 from ..images import ImageLoader
-from ..models import Device, Playlist, fmt_ms
+from ..models import Playlist, fmt_ms
 from ..theme import C
 from .controls import HeartSlider, MarqueeLabel, PixelButton
 from .cover import VinylCover
@@ -263,8 +263,7 @@ class NowPlaying(QWidget):
     repeatClicked = Signal()
     seekTo = Signal(int)
     volumeTo = Signal(int)
-    deviceChosen = Signal(str)
-    devicesOpened = Signal()
+    speakerClicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -331,17 +330,10 @@ class NowPlaying(QWidget):
         vol.addWidget(self.volume, 1)
         lay.addLayout(vol)
 
-        dev = QHBoxLayout()
-        dev.setContentsMargins(6, 2, 6, 0)
-        dic = QLabel()
-        dic.setPixmap(theme.pixmap("device", C.hot, 2))
-        self.devices = _DeviceCombo()
-        self.devices.setToolTip("Which speaker plays the music")
-        self.devices.opened.connect(self.devicesOpened)
-        self.devices.activated.connect(self._device_activated)
-        dev.addWidget(dic)
-        dev.addWidget(self.devices, 1)
-        lay.addLayout(dev)
+        self.speaker = SpeakerChip()
+        self.speaker.clicked.connect(self.speakerClicked)
+        lay.addSpacing(4)
+        lay.addWidget(self.speaker)
         lay.addStretch(1)
         self._repeat = "off"
 
@@ -382,30 +374,76 @@ class NowPlaying(QWidget):
         if v is not None and not self.volume.dragging:
             self.volume.set_value(v)
 
-    def set_devices(self, devices: list[Device], active_id: str = ""):
-        self.devices.blockSignals(True)
-        self.devices.clear()
-        if not devices:
-            self.devices.addItem("no speakers found", "")
-        for d in devices:
-            label = f"{'♡ ' if d.id == active_id else ''}{d.name}"
-            self.devices.addItem(label, d.id)
-            if d.id == active_id:
-                self.devices.setCurrentIndex(self.devices.count() - 1)
-        if not active_id and devices:
-            self.devices.insertItem(0, "choose a speaker...", "")
-            self.devices.setCurrentIndex(0)
-        self.devices.blockSignals(False)
+    def set_speaker(self, phase: str, detail: str):
+        self.speaker.set_status(phase, detail)
 
-    def _device_activated(self, idx: int):
-        did = self.devices.itemData(idx)
-        if did:
-            self.deviceChosen.emit(did)
+    @property
+    def speaker_phase(self) -> str:
+        return self.speaker.phase
 
 
-class _DeviceCombo(QComboBox):
-    opened = Signal()
+class SpeakerChip(QWidget):
+    """Status pill for the built-in speaker: a blinking light plus a short message."""
+    clicked = Signal()
+    COLORS = {"ready": C.mint, "starting": C.butter, "login": C.lavender,
+              "elsewhere": C.butter, "error": C.shell_dark, "missing": C.shell_dark,
+              "off": C.plum_soft}
 
-    def showPopup(self):
-        self.opened.emit()
-        super().showPopup()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.phase, self.detail = "starting", "warming up the speaker"
+        self._blink = True
+        self.setFixedHeight(54)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        t = QTimer(self)
+        t.timeout.connect(self._tick)
+        t.start(500)
+
+    def set_status(self, phase: str, detail: str):
+        self.phase, self.detail = phase, detail or self.detail
+        self.setToolTip(self.detail)
+        self.update()
+
+    def _tick(self):
+        if self.phase in ("starting", "login", "elsewhere"):
+            self._blink = not self._blink
+            self.update()
+        elif not self._blink:
+            self._blink = True
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(6, 4, -6, -4)
+        p.setPen(QPen(QColor(C.shell), 3))
+        p.setBrush(QColor(C.white))
+        p.drawRoundedRect(r, 16, 16)
+        # little speaker icon + status light
+        theme.draw_icon(p, "speaker", C.hot, r.left() + 22, r.center().y(), 2.2)
+        light = QColor(self.COLORS.get(self.phase, C.butter))
+        if not self._blink:
+            light.setAlpha(70)
+        p.setBrush(light)
+        p.setPen(QPen(QColor(C.plum), 1.5))
+        p.drawEllipse(QPointF(r.left() + 47, r.top() + 14), 5, 5)
+        p.setPen(QColor(C.plum))
+        p.setFont(theme.heading(12, True))
+        title = {"ready": "this computer", "elsewhere": "this computer",
+                 "login": "speaker login", "missing": "speaker missing",
+                 "error": "speaker trouble", "off": "speaker off"}.get(self.phase, "speaker")
+        tx = r.left() + 58
+        p.drawText(QRectF(tx, r.top() + 4, r.width() - tx, 20),
+                   Qt.AlignmentFlag.AlignVCenter, title)
+        p.setFont(theme.body(17))
+        p.setPen(QColor(C.plum_soft))
+        fm = QFontMetrics(p.font())
+        p.drawText(QRectF(r.left() + 40, r.top() + 24, r.right() - r.left() - 48, 20),
+                   Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(self.detail, Qt.TextElideMode.ElideRight,
+                                 int(r.right() - r.left() - 52)))
+        p.end()

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QSizeGrip,
 from . import config, theme
 from .auth import AuthError, TokenManager, login
 from .images import ImageLoader
-from .librespot import LibrespotManager, find_binary
+from . import speaker as spk
 from .models import Device, PlaybackState, Playlist, Track
 from .spotify import NoActiveDevice, SpotifyClient, SpotifyError
 from .theme import C
@@ -23,23 +23,6 @@ from .widgets.tracklist import TrackList
 from .worker import run_async
 
 MARGIN = 14  # transparent space around the shell for the drop shadow
-
-
-def pick_device(devices: list[Device], preferred_id: str = "",
-                librespot_name: str = "") -> Device | None:
-    """Choose a speaker: the one you picked last, else this computer's built-in
-    librespot speaker, else whatever is active, else a computer, else anything."""
-    if not devices:
-        return None
-    by_id = {d.id: d for d in devices}
-    if preferred_id in by_id:
-        return by_id[preferred_id]
-    if librespot_name:
-        for d in devices:
-            if d.name == librespot_name:
-                return d
-    return next((d for d in devices if d.is_active), None) or \
-        next((d for d in devices if d.type.lower() == "computer"), devices[0])
 
 
 class Card(QWidget):
@@ -67,6 +50,8 @@ class MainWindow(QWidget):
         self.state = PlaybackState()
         self.state_at = time.monotonic()
         self.devices: list[Device] = []
+        self.speaker_id = ""          # Spotify device id of our built-in speaker
+        self._finding_speaker = False
         self.view: Playlist | None = None
         self.view_tracks: list[Track] = []
         self.track_cache: dict[str, list[Track]] = {}
@@ -86,8 +71,10 @@ class MainWindow(QWidget):
 
         self.images = ImageLoader(self)
         self.images.loaded.connect(self._image_loaded)
-        self.librespot = LibrespotManager(self)
-        self.librespot.loginUrl.connect(self._librespot_login)
+        self.speaker = spk.Speaker(settings.device_name, self)
+        self.speaker.phaseChanged.connect(self._speaker_phase)
+        self.speaker.loginUrl.connect(self._speaker_login_url)
+        self._speaker_url = ""
         self._build()
         self._shortcuts()
 
@@ -153,8 +140,7 @@ class MainWindow(QWidget):
         self.np.repeatClicked.connect(self.cycle_repeat)
         self.np.seekTo.connect(self.seek)
         self.np.volumeTo.connect(self.set_volume)
-        self.np.deviceChosen.connect(self.transfer)
-        self.np.devicesOpened.connect(self.refresh_devices)
+        self.np.speakerClicked.connect(self._speaker_clicked)
         outer.addLayout(body, 1)
 
         self.toast = QLabel(self)
@@ -235,9 +221,9 @@ class MainWindow(QWidget):
             QTimer.singleShot(800, self._login)
             return
         if isinstance(exc, NoActiveDevice):
-            self.say("no speaker yet! open Spotify on your phone or laptop, "
-                     "then pick it below ♡", 6000)
-            self.refresh_devices()
+            self.say("the speaker isn't ready yet, try again in a sec ♡", 5000)
+            self.speaker_id = ""
+            self._find_speaker()
             return
         if isinstance(exc, SpotifyError):
             self.say(str(exc), 5000)
@@ -286,8 +272,7 @@ class MainWindow(QWidget):
         run_async(self.client.me, on_done=got_me, on_error=self._error)
         self.refresh_playlists()
         self.sidebar.select_id("__liked")
-        self._maybe_start_librespot()
-        self.refresh_devices()
+        self._start_speaker()
         self.poll()
         self.poll_timer.start(int(self.settings.poll_seconds * 1000))
 
@@ -295,17 +280,92 @@ class MainWindow(QWidget):
         run_async(self.client.playlists, on_done=self.sidebar.set_playlists,
                   on_error=self._error)
 
-    # ------------------------------------------------------------------ librespot
-    def _maybe_start_librespot(self):
-        if self.demo or not self.settings.librespot_autostart:
+    # ------------------------------------------------------------------ speaker
+    def _start_speaker(self):
+        """Start the built-in speaker so music plays straight out of this computer."""
+        if self.demo:
+            self.speaker_id = "dev-here"
+            self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
             return
-        binary = find_binary(self.settings.librespot_path)
-        if binary and self.librespot.start(binary, self.settings.device_name):
-            QTimer.singleShot(3500, self.refresh_devices)
+        binary = spk.find_binary(self.settings.librespot_path)
+        if not binary:
+            self.speaker.start("")
+            return
+        tm = self.client.tokens
 
-    def _librespot_login(self, url: str):
-        self.say("one-time login so this computer can be a speaker ♡", 6000)
-        webbrowser.open(url)
+        def token():
+            return tm.access_token(), tm.scope
+
+        run_async(token, on_done=lambda t: self.speaker.start(binary, *t),
+                  on_error=lambda e: self.speaker.start(binary))
+
+    def _speaker_phase(self, phase: str, detail: str):
+        self.np.set_speaker(phase, detail)
+        if phase == spk.READY:
+            self._find_speaker()
+        elif phase == spk.LOGIN:
+            self.say("one quick login so this computer can play music ♡", 7000)
+        elif phase == spk.ERROR:
+            self.speaker_id = ""
+            self.say(detail, 7000)
+        elif phase == spk.MISSING:
+            self.say("the built-in speaker is missing: see the README ♡", 8000)
+
+    def _speaker_login_url(self, url: str):
+        self._speaker_url = url  # librespot opens the browser itself; chip click reopens
+
+    def _speaker_clicked(self):
+        phase = self.speaker.phase if not self.demo else spk.READY
+        if phase == spk.LOGIN and self._speaker_url:
+            webbrowser.open(self._speaker_url)
+        elif phase in (spk.ERROR, spk.OFF):
+            self.speaker.stop()
+            self._start_speaker()
+        elif phase == spk.MISSING:
+            self.open_settings()
+        elif self.speaker_id and self.state.device and self.state.device.id != self.speaker_id:
+            self.bring_here()
+
+    def _find_speaker(self, attempt: int = 0):
+        """Look up our speaker's Spotify device id (it takes a moment to register)."""
+        if self.demo or not self.client or (self._finding_speaker and attempt == 0):
+            return
+        self._finding_speaker = True
+        name = self.settings.device_name
+
+        def done(devs):
+            self.devices = devs
+            me = next((d for d in devs if d.name == name), None)
+            if me:
+                self._finding_speaker = False
+                first = not self.speaker_id
+                self.speaker_id = me.id
+                self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
+                if first and not (self.state.device and self.state.device.is_active
+                                  and self.state.is_playing):
+                    # make this computer the active speaker, without blasting music
+                    run_async(self.client.transfer, me.id, False, on_error=lambda e: None)
+            elif attempt < 20:
+                QTimer.singleShot(1500, lambda: self._find_speaker(attempt + 1))
+            else:
+                self._finding_speaker = False
+                self.np.set_speaker(spk.ERROR, "speaker didn't show up on Spotify")
+
+        def fail(_e):
+            if attempt < 20:
+                QTimer.singleShot(2000, lambda: self._find_speaker(attempt + 1))
+            else:
+                self._finding_speaker = False
+
+        run_async(self.client.devices, on_done=done, on_error=fail)
+
+    def bring_here(self):
+        """Move whatever is playing on another device over to this computer."""
+        if not self.speaker_id:
+            return
+        self.say("bringing the music here ♡")
+        run_async(self.client.transfer, self.speaker_id, True,
+                  on_done=lambda _: self._refresh_soon(), on_error=self._error)
 
     # ------------------------------------------------------------------ views
     def _show_empty(self, on: bool):
@@ -378,29 +438,22 @@ class MainWindow(QWidget):
         self.open_view(pl)
 
     # ------------------------------------------------------------------ playback
-    def _device_prefs(self) -> tuple[str, str]:
-        """Snapshot (taken on the UI thread) of which speaker we'd like to use."""
-        lib_name = self.settings.device_name if self.librespot.running else ""
-        return self.settings.preferred_device_id, lib_name
-
     def _play(self, **kw):
-        client = self.client
-        active = self.state.device and self.state.device.is_active
-        prefs = self._device_prefs()
+        if not self.speaker_id:
+            phase = self.speaker.phase
+            if phase == spk.MISSING:
+                self.say("the built-in speaker is missing: see the README ♡", 6000)
+            elif phase == spk.LOGIN:
+                self.say("finish the one-time speaker login in your browser first ♡", 6000)
+            else:
+                self.say("the speaker is still warming up, one sec ♡")
+                self._find_speaker()
+            return
+        client, device = self.client, self.speaker_id
 
         def job():
-            if not active:
-                dev = pick_device(client.devices(), *prefs)
-                if dev:
-                    kw["device_id"] = dev.id
-            try:
-                client.play(**kw)
-            except NoActiveDevice:
-                dev = pick_device(client.devices(), *prefs)
-                if not dev:
-                    raise
-                kw["device_id"] = dev.id
-                client.play(**kw)
+            # Always aim at our own speaker, so the sound comes out of this computer.
+            client.play(device_id=device, **kw)
 
         self.state.is_playing = True
         self.np.set_playing(True)
@@ -434,8 +487,9 @@ class MainWindow(QWidget):
         if shuffle or self.state.shuffle != shuffle:
             self.np.set_shuffle(shuffle)
             self.state.shuffle = shuffle
-            # shuffle needs a device; ignore failure here, play() will sort out devices
-            run_async(client.shuffle, shuffle, on_done=lambda _: go(), on_error=lambda _e: go())
+            # shuffle needs an active device; if it fails, play() still starts the music
+            run_async(client.shuffle, shuffle, self.speaker_id,
+                      on_done=lambda _: go(), on_error=lambda _e: go())
         else:
             go()
 
@@ -483,26 +537,6 @@ class MainWindow(QWidget):
         self.state.volume = v
         self._cmd("volume", v)
 
-    def transfer(self, device_id: str):
-        self.settings.preferred_device_id = device_id
-        self.settings.save()
-        name = next((d.name for d in self.devices if d.id == device_id), "speaker")
-        self.say(f"now playing on {name} ♡")
-        run_async(self.client.transfer, device_id, True,
-                  on_done=lambda _: (self._refresh_soon(), QTimer.singleShot(900, self.refresh_devices)),
-                  on_error=self._error)
-
-    def refresh_devices(self):
-        if not self.client:
-            return
-
-        def done(devs):
-            self.devices = devs
-            active = next((d.id for d in devs if d.is_active), "")
-            self.np.set_devices(devs, active)
-
-        run_async(self.client.devices, on_done=done, on_error=lambda e: None)
-
     # ------------------------------------------------------------------ state sync
     def _refresh_soon(self, ms: int = 450):
         QTimer.singleShot(ms, self.poll)
@@ -544,9 +578,10 @@ class MainWindow(QWidget):
         self.np.set_repeat(s.repeat if s.repeat in ("off", "context", "track") else "off")
         self.np.set_volume(s.volume)
         self.np.set_progress(s.progress_ms)
-        if s.device and s.device.id and not any(d.id == s.device.id and d.is_active
-                                                for d in self.devices):
-            self.refresh_devices()
+        if self.speaker_id and s.device and s.device.id and s.device.id != self.speaker_id:
+            self.np.set_speaker("elsewhere", f"playing on {s.device.name}: tap to bring it here")
+        elif self.speaker_id and self.np.speaker_phase == "elsewhere":
+            self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
 
     def _sync_progress(self):
         self.state.progress_ms = self._current_pos()
@@ -579,16 +614,18 @@ class MainWindow(QWidget):
         res = dlg.exec()
         if res == SettingsDialog.LOGOUT:
             config.clear_token()
+            self.speaker.forget_login()
             self.say("logged out. see you soon ♡")
             QTimer.singleShot(1200, QApplication.instance().quit)
         elif res == SettingsDialog.DialogCode.Accepted and not self.demo:
             if self.settings.client_id != old_id:
                 config.clear_token()
                 self._login()
-            self._maybe_start_librespot()
+            if self.speaker.phase in (spk.MISSING, spk.ERROR, spk.OFF):
+                self._start_speaker()
 
     def closeEvent(self, e):
         self._closing = True
         self.poll_timer.stop()
-        self.librespot.stop()
+        self.speaker.stop()
         super().closeEvent(e)

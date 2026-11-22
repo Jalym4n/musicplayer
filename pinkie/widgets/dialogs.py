@@ -6,11 +6,11 @@ import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QVBoxLayout)
 
 from .. import config, theme
-from ..librespot import find_binary
+from ..speaker import find_binary
 from ..theme import C
 
 DASHBOARD = "https://developer.spotify.com/dashboard"
@@ -67,30 +67,28 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.client_id)
 
         lay.addSpacing(6)
-        sp = QLabel("play through this computer (optional)")
+        sp = QLabel("built-in speaker")
         sp.setFont(theme.heading(15, True))
         sp.setStyleSheet(f"color:{C.hot};")
         lay.addWidget(sp)
         found = find_binary(settings.librespot_path)
         hint = QLabel(
-            "Without this, Pinkie Player remote-controls Spotify on your phone, laptop "
-            "or speaker. Install <b>librespot</b> and the app becomes its own speaker. "
-            + (f"Found: <b>{found}</b>" if found else "Not found yet."))
+            "Music plays straight out of this computer's speakers or headphones. "
+            + ("<b>Ready ♡</b>" if found else
+               "<b>Not found.</b> Use the downloadable app, or run "
+               "<b>python scripts/build_librespot.py</b> once."))
         hint.setObjectName("hint")
         hint.setTextFormat(Qt.TextFormat.RichText)
         _wrap(hint)
         lay.addWidget(hint)
         row = QHBoxLayout()
         self.lib_path = QLineEdit(settings.librespot_path)
-        self.lib_path.setPlaceholderText("auto-detect librespot")
+        self.lib_path.setPlaceholderText(found or "librespot location (advanced)")
         browse = QPushButton("browse")
         browse.clicked.connect(self._browse)
         row.addWidget(self.lib_path, 1)
         row.addWidget(browse)
         lay.addLayout(row)
-        self.autostart = QCheckBox("start the built-in speaker when the app opens")
-        self.autostart.setChecked(settings.librespot_autostart)
-        lay.addWidget(self.autostart)
 
         lay.addSpacing(8)
         btns = QHBoxLayout()
@@ -121,6 +119,5 @@ class SettingsDialog(QDialog):
     def _accept(self):
         self.settings.client_id = self.client_id.text().strip()
         self.settings.librespot_path = self.lib_path.text().strip()
-        self.settings.librespot_autostart = self.autostart.isChecked()
         self.settings.save()
         self.accept()

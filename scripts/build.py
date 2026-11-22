@@ -8,6 +8,7 @@ Output:
   Linux   -> dist/Pinkie Player/Pinkie Player
 
 Build on the OS you want to run it on (PyInstaller does not cross-compile).
+The built-in speaker (librespot) is compiled first if pinkie/bin/ doesn't have it.
 """
 from __future__ import annotations
 
@@ -37,7 +38,21 @@ def make_icons() -> Path:
     return png  # PyInstaller turns a PNG into .icns on macOS if Pillow is installed
 
 
+def speaker_binary() -> Path | None:
+    exe = "librespot.exe" if sys.platform == "win32" else "librespot"
+    path = ROOT / "pinkie" / "bin" / exe
+    if not path.is_file():
+        print("Building the built-in speaker first (scripts/build_librespot.py)...")
+        if subprocess.call([sys.executable, str(ROOT / "scripts" / "build_librespot.py")]) != 0:
+            return None
+    return path if path.is_file() else None
+
+
 def main() -> int:
+    speaker = speaker_binary()
+    if speaker is None:
+        print("Can't build the app without the built-in speaker. See messages above.")
+        return 1
     icon = make_icons()
     sep = ";" if sys.platform == "win32" else ":"
     cmd = [
@@ -45,6 +60,7 @@ def main() -> int:
         "--name", "Pinkie Player",
         "--icon", str(icon),
         "--add-data", f"{ASSETS}{sep}pinkie/assets",
+        "--add-binary", f"{speaker}{sep}librespot",
         # keep the bundle lean: nothing web-engine or QML related is ever loaded
         "--exclude-module", "PySide6.QtWebEngineCore",
         "--exclude-module", "PySide6.QtWebEngineWidgets",

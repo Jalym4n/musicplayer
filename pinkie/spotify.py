@@ -252,8 +252,11 @@ class SpotifyClient:
     def seek(self, ms: int) -> None:
         self._req("PUT", "/me/player/seek", params={"position_ms": max(0, int(ms))})
 
-    def shuffle(self, on: bool) -> None:
-        self._req("PUT", "/me/player/shuffle", params={"state": "true" if on else "false"})
+    def shuffle(self, on: bool, device_id: str = "") -> None:
+        params = {"state": "true" if on else "false"}
+        if device_id:
+            params["device_id"] = device_id
+        self._req("PUT", "/me/player/shuffle", params=params)
 
     def repeat(self, mode: str) -> None:
         self._req("PUT", "/me/player/repeat", params={"state": mode})

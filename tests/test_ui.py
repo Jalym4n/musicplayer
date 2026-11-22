@@ -7,15 +7,13 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
-
 from pinkie import config, theme  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def app(tmp_path_factory):
+def app(tmp_path_factory, qapp):
     os.environ["PINKIE_CONFIG_DIR"] = str(tmp_path_factory.mktemp("cfg"))
-    a = QApplication.instance() or QApplication([])
+    a = qapp
     theme.load_fonts()
     a.setStyleSheet(theme.stylesheet())
     return a
@@ -66,15 +64,3 @@ def test_demo_window_plays_and_skips(app):
     assert win.empty.isVisible() and "press play" in win.empty.text()
     win.close()
 
-
-def test_pick_device_order():
-    from pinkie.main_window import pick_device
-    from pinkie.models import Device
-    phone = Device("p", "Phone", "Smartphone", is_active=True)
-    here = Device("h", "Pinkie Player", "Computer")
-    tv = Device("t", "TV", "TV")
-    assert pick_device([]) is None
-    assert pick_device([phone, here, tv], preferred_id="t") is tv
-    assert pick_device([phone, here, tv], librespot_name="Pinkie Player") is here
-    assert pick_device([phone, here, tv]) is phone
-    assert pick_device([tv, here]) is here

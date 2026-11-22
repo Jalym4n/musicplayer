@@ -21,6 +21,7 @@ SCOPES = [
     "playlist-read-collaborative",
     "user-library-read",
     "user-read-recently-played",
+    "streaming",  # lets the built-in speaker sign in with this same login
 ]
 
 
@@ -49,11 +50,9 @@ def cache_dir() -> Path:
 @dataclass
 class Settings:
     client_id: str = ""
-    # Optional: path to a librespot binary so the app can be its own speaker.
+    # Override for the built-in speaker binary (librespot). Empty = use the bundled one.
     librespot_path: str = ""
-    librespot_autostart: bool = True
     device_name: str = APP_NAME
-    preferred_device_id: str = ""
     poll_seconds: float = 2.5
     extra: dict = field(default_factory=dict)
 

@@ -152,7 +152,7 @@ class DemoClient:
     def seek(self, ms):
         self._set_pos(int(ms))
 
-    def shuffle(self, on):
+    def shuffle(self, on, device_id=""):
         self._shuffle = on
 
     def repeat(self, mode):

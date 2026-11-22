@@ -31,7 +31,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pinkie", description="Pinkie Player")
     ap.add_argument("--demo", action="store_true", help="preview with fake music, no login")
     ap.add_argument("--screenshot", metavar="PNG", help=argparse.SUPPRESS)
+    ap.add_argument("--check-speaker", action="store_true",
+                    help="print where the built-in speaker (librespot) is and exit")
     args = ap.parse_args(argv)
+    if args.check_speaker:
+        from .speaker import find_binary
+        path = find_binary(config.Settings.load().librespot_path)
+        print(path or "built-in speaker NOT found")
+        return 0 if path else 1
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(config.APP_NAME)

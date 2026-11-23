@@ -137,8 +137,9 @@ You stay logged in after that, so later launches go straight to your music.
 **Soloist updates:** Spotify's Soloist builds stop working 90 days after they're made.
 When that happens the pill says the build expired. Open Settings → **update Soloist**.
 
-**Publishing a new release** (after changes): repo → **Actions** → **Build Aayusha's Music
-Player** → **Run workflow**, type a new tag like `v1.1.0` in "release_tag", and run it.
+**Publishing a new release** (after changes): bump `__version__` in `pinkie/__init__.py`
+(e.g. `1.1.0`) and push a commit whose message contains `[release]`. Or: repo → **Actions** →
+**Build Aayusha's Music Player** → **Run workflow** with a tag like `v1.1.0`.
 (Every push also builds test copies under that run's **Artifacts**, for signed-in users.)
 
 ## Personalizing

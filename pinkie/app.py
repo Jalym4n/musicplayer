@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from PySide6.QtCore import QTimer
@@ -25,6 +26,18 @@ def app_icon() -> QIcon:
         p.end()
         ic.addPixmap(pm)
     return ic
+
+
+def _finish(code: int) -> int:
+    """Leave without Python's interpreter teardown on macOS.
+
+    Tearing down PyObjC (Now Playing) and Qt objects at exit can get the process killed
+    on macOS. Everything worth keeping is saved by then, so exit straight away."""
+    if sys.platform == "darwin":
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         if bridge.available:
             bridge.set_track("test", "test", 1000, None)
             bridge.shutdown()
-        return 0 if bridge.available or sys.platform != "darwin" else 1
+        return _finish(0 if bridge.available or sys.platform != "darwin" else 1)
 
     from .main_window import MainWindow
     win = MainWindow(config.Settings.load(), demo=args.demo)
@@ -73,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.demo:
             QTimer.singleShot(400, lambda: win.play_row(2))
         QTimer.singleShot(3000, shoot)
-    return app.exec()
+    return _finish(app.exec())
 
 
 if __name__ == "__main__":

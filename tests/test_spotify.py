@@ -9,15 +9,16 @@ from pinkie.auth import TokenManager
 
 
 class FakeResp:
-    def __init__(self, status=200, body=None, headers=None):
+    def __init__(self, status=200, body=None, headers=None, raw=None):
         self.status_code = status
         self._body = body
         self.headers = headers or {}
-        self.content = b"" if body is None else json.dumps(body).encode()
+        self.content = raw if raw is not None else (
+            b"" if body is None else json.dumps(body).encode())
         self.text = self.content.decode()
 
     def json(self):
-        return self._body
+        return json.loads(self.content)
 
 
 class FakeSession:
@@ -123,3 +124,11 @@ def test_401_triggers_one_refresh_then_retry(monkeypatch):
     monkeypatch.setattr(c.tokens, "force_refresh", lambda: refreshed.append(1))
     assert c.me()["id"] == "me"
     assert refreshed == [1]
+
+
+def test_player_command_with_non_json_200_body_is_ok():
+    # Spotify sometimes answers player commands with 200 and a non-JSON body
+    c = make_client({("PUT", "/me/player/shuffle"): FakeResp(200, raw=b"a1b2c3"),
+                     ("PUT", "/me/player/repeat"): FakeResp(200, raw=b" ")})
+    c.shuffle(True)
+    c.repeat("context")

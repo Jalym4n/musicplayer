@@ -125,7 +125,14 @@ class SpotifyClient:
             time.sleep(wait)
             return self._req(method, path, params=params, json=json, _retry=False)
         if resp.status_code in (200, 201):
-            return resp.json() if resp.content else None
+            # Player commands (shuffle, repeat, volume, ...) sometimes answer 200 with a
+            # body that isn't JSON. The command still worked, so treat it as "no data".
+            if not resp.content:
+                return None
+            try:
+                return resp.json()
+            except ValueError:
+                return None
         if resp.status_code in (202, 204):
             return None
         reason, message = "", resp.text[:200]

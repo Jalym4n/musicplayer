@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QVBoxLayout)
 
 from .. import config, theme
-from ..speaker import find_binary
+from ..speaker import find_binary, log_path
 from ..theme import C
 
 DASHBOARD = "https://developer.spotify.com/dashboard"
@@ -24,6 +24,7 @@ def _wrap(label: QLabel, width: int = 548) -> None:
 
 class SettingsDialog(QDialog):
     LOGOUT = 2
+    RESET_SPEAKER = 3
 
     def __init__(self, settings: config.Settings, first_run: bool = False, parent=None):
         super().__init__(parent)
@@ -89,6 +90,18 @@ class SettingsDialog(QDialog):
         row.addWidget(self.lib_path, 1)
         row.addWidget(browse)
         lay.addLayout(row)
+        if not first_run:
+            tools = QHBoxLayout()
+            b_log = QPushButton("open speaker log")
+            b_log.setToolTip(str(log_path()))
+            b_log.clicked.connect(self._open_log)
+            b_reset = QPushButton("reset speaker login")
+            b_reset.setToolTip("Forget the speaker's saved login and sign it in again")
+            b_reset.clicked.connect(lambda: self.done(self.RESET_SPEAKER))
+            tools.addWidget(b_log)
+            tools.addWidget(b_reset)
+            tools.addStretch(1)
+            lay.addLayout(tools)
 
         lay.addSpacing(8)
         btns = QHBoxLayout()
@@ -110,6 +123,12 @@ class SettingsDialog(QDialog):
     def _validate(self):
         ok = bool(re.fullmatch(r"[0-9a-fA-F]{32}", self.client_id.text().strip()))
         self.ok.setEnabled(ok)
+
+    def _open_log(self):
+        path = log_path()
+        if not path.exists():
+            path.write_text("(the speaker hasn't written anything yet)\n", "utf-8")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "Find librespot")

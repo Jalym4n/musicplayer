@@ -287,17 +287,7 @@ class MainWindow(QWidget):
             self.speaker_id = "dev-here"
             self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
             return
-        binary = spk.find_binary(self.settings.librespot_path)
-        if not binary:
-            self.speaker.start("")
-            return
-        tm = self.client.tokens
-
-        def token():
-            return tm.access_token(), tm.scope
-
-        run_async(token, on_done=lambda t: self.speaker.start(binary, *t),
-                  on_error=lambda e: self.speaker.start(binary))
+        self.speaker.start(spk.find_binary(self.settings.librespot_path))
 
     def _speaker_phase(self, phase: str, detail: str):
         self.np.set_speaker(phase, detail)
@@ -320,6 +310,7 @@ class MainWindow(QWidget):
             webbrowser.open(self._speaker_url)
         elif phase in (spk.ERROR, spk.OFF):
             self.speaker.stop()
+            self.speaker_id = ""
             self._start_speaker()
         elif phase == spk.MISSING:
             self.open_settings()
@@ -617,6 +608,11 @@ class MainWindow(QWidget):
             self.speaker.forget_login()
             self.say("logged out. see you soon ♡")
             QTimer.singleShot(1200, QApplication.instance().quit)
+        elif res == SettingsDialog.RESET_SPEAKER and not self.demo:
+            self.speaker.forget_login()
+            self.speaker_id = ""
+            self.say("speaker login reset: a Spotify login tab will open ♡", 6000)
+            self._start_speaker()
         elif res == SettingsDialog.DialogCode.Accepted and not self.demo:
             if self.settings.client_id != old_id:
                 config.clear_token()

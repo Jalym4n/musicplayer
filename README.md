@@ -104,8 +104,9 @@ result goes in `dist/`.
 ### Step 3: First launch
 1. Paste your **Client ID** into the setup window and click **let's go!**
 2. Your browser opens the Spotify login. Approve it and close the tab.
-3. The speaker panel turns **mint**. If Spotify asks the speaker to sign in separately,
-   a second Spotify tab opens once. Approve it too.
+3. A second Spotify tab opens **once** so the built-in speaker can sign in (Spotify
+   requires its own login for it). Approve it and close the tab. The speaker panel turns
+   **mint**.
 4. Pick a playlist and press play ♡
 
 You stay logged in after that, so later launches go straight to your music.
@@ -131,7 +132,7 @@ Your Client ID runs in Spotify's **Development Mode**, which is meant for person
 | Speaker panel says **speaker missing** | Running from source: run `python scripts/build_librespot.py`. Or use the downloaded app |
 | Speaker panel says **no sound output found** | Plug in or switch on speakers/headphones, then tap the panel to restart the speaker |
 | Speaker panel says **speaker login** | Finish the Spotify tab that opened. Tap the panel to open it again |
-| Speaker panel shows **speaker trouble** | Tap the panel to restart it. Run with `PINKIE_DEBUG=1` to see the speaker's log |
+| Speaker panel shows **speaker trouble**, or keeps saying "warming up" / "restarting" | Settings (gear) → **reset speaker login**, then approve the Spotify tab. Still stuck? Settings → **open speaker log** and send the last 30 lines |
 | macOS says the app or `librespot` "can't be opened" | Run the `xattr` command from Step 2A |
 | "Playback control needs Spotify Premium" | The logged-in account isn't Premium |
 | "asking too often" | Spotify's rate limit. Wait a minute |

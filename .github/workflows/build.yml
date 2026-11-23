@@ -59,6 +59,14 @@ jobs:
       - name: Build app
         run: python scripts/build.py
 
+      - name: Smoke test bundled speaker
+        shell: bash
+        run: |
+          bin=$(find dist -type f \( -name librespot -o -name librespot.exe \) | head -1)
+          echo "speaker: $bin"
+          test -n "$bin"
+          "$bin" --version
+
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: ditto -c -k --keepParent "dist/Pinkie Player.app" "${{ matrix.artifact }}.zip"

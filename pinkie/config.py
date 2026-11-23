@@ -21,7 +21,6 @@ SCOPES = [
     "playlist-read-collaborative",
     "user-library-read",
     "user-read-recently-played",
-    "streaming",  # lets the built-in speaker sign in with this same login
 ]
 
 

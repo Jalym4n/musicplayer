@@ -1,65 +1,112 @@
-"""Title bar, sidebar, playlist header and the now-playing panel."""
+"""Title bar, speaker status pill and the compact playlist header."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QAbstractButton, QHBoxLayout, QLabel, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from .. import theme
 from ..images import ImageLoader
-from ..models import Playlist, fmt_ms
+from ..models import Playlist
 from ..theme import C
-from .controls import HeartSlider, MarqueeLabel, PixelButton
-from .cover import VinylCover
 
 
-class TitleBar(QWidget):
-    """Custom draggable title bar (the window is frameless so it can be all pink)."""
-    settingsClicked = Signal()
+class RetroButton(QAbstractButton):
+    """Tiny square window button, old-school desktop style but pastel."""
 
-    def __init__(self, window, parent=None):
+    def __init__(self, icon: str, tooltip: str, fill: str = C.white, size: int = 26,
+                 px: float = 2.0, parent=None):
         super().__init__(parent)
-        self.win = window
-        self.setFixedHeight(46)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 6, 12, 2)
-        lay.addStretch(1)
-        self.btn_settings = PixelButton("gear", 26, 1.8, tooltip="Settings")
-        self.btn_min = PixelButton("minus", 26, 2, fill=C.butter, tooltip="Minimize")
-        self.btn_close = PixelButton("close", 26, 2, fill=C.mint, tooltip="Close")
-        for b in (self.btn_settings, self.btn_min, self.btn_close):
-            lay.addWidget(b)
-        self.btn_settings.clicked.connect(self.settingsClicked)
-        self.btn_min.clicked.connect(window.showMinimized)
-        self.btn_close.clicked.connect(window.close)
-        self._drag = None
-        self._sparkle = 0
-        t = QTimer(self)
-        t.timeout.connect(self._twinkle)
-        t.start(600)
+        self.icon_name, self.fill, self.px = icon, fill, px
+        self.setFixedSize(size, size)
+        self.setToolTip(tooltip)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._hover = False
 
-    def _twinkle(self):
-        self._sparkle = (self._sparkle + 1) % 4
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
         self.update()
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        f = theme.heading(22, True)
-        p.setFont(f)
-        text = "pinkie player"
-        x = 52
-        # sticker-style outlined title
-        p.setPen(QColor(C.shell_dark))
-        p.drawText(QPointF(x + 2, 34), text)
-        p.setPen(QColor(C.white))
-        p.drawText(QPointF(x, 32), text)
-        theme.draw_icon(p, "heart", C.white, 30, 24, 2.4)
-        tw = QFontMetrics(f).horizontalAdvance(text)
-        for i, dx in enumerate((tw + 70, tw + 96, tw + 118)):
-            col = C.white if (i + self._sparkle) % 3 else C.butter
-            theme.draw_icon(p, "sparkle", col, dx, 24 + (i % 2) * 6, 1.6 + (i == self._sparkle % 3) * .6)
+        d = 2 if self.isDown() else 0
+        r = QRectF(self.rect()).adjusted(2, 2 + d, -2, -3 + d)
+        if not d:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(C.lav_dark))
+            p.drawRoundedRect(r.translated(0, 2), 6, 6)
+        p.setBrush(QColor(C.pink_soft if self._hover else self.fill))
+        p.setPen(QPen(QColor(C.lav_dark), 1.8))
+        p.drawRoundedRect(r, 6, 6)
+        theme.draw_icon(p, self.icon_name, C.plum, r.center().x(), r.center().y(), self.px)
+        p.end()
+
+
+class TitleBar(QWidget):
+    """Draggable title strip: candies + star, the personalised title, window buttons."""
+    settingsClicked = Signal()
+    miniClicked = Signal()
+
+    def __init__(self, window, title: str, parent=None):
+        super().__init__(parent)
+        self.win = window
+        self.title = title
+        self.setFixedHeight(52)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 8, 14, 4)
+        lay.setSpacing(6)
+        lay.addStretch(1)
+        self.btn_mini = RetroButton("mini", "Mini-player (Ctrl+M)", C.butter, px=1.8)
+        self.btn_settings = RetroButton("gear", "Settings", C.white, px=1.6)
+        self.btn_min = RetroButton("minus", "Minimize", C.mint)
+        self.btn_close = RetroButton("close", "Close", C.pink_soft)
+        for b in (self.btn_mini, self.btn_settings, self.btn_min, self.btn_close):
+            lay.addWidget(b)
+        self.btn_mini.clicked.connect(self.miniClicked)
+        self.btn_settings.clicked.connect(self.settingsClicked)
+        self.btn_min.clicked.connect(window.showMinimized)
+        self.btn_close.clicked.connect(window.close)
+        self._drag = None
+        self._t = 0
+        t = QTimer(self)
+        t.timeout.connect(self._twinkle)
+        t.start(700)
+
+    def set_title(self, title: str):
+        self.title = title
+        self.update()
+
+    def _twinkle(self):
+        self._t += 1
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cy = self.height() / 2 + 2
+        theme.draw_icon(p, "candy", C.lav_dark, 35, cy + 1, 2.4, C.lav_dark)
+        theme.draw_icon(p, "candy", C.hot, 34, cy, 2.4, C.white)
+        theme.draw_icon(p, "candy", C.lav_dark, 77, cy + 1, 2.4, C.lav_dark)
+        theme.draw_icon(p, "candy", C.lav_mid, 76, cy, 2.4, C.white)
+        theme.draw_icon(p, "star", "#e0a800", 113, cy + 1, 2.6)
+        theme.draw_icon(p, "star", C.star, 112, cy, 2.6)
+        f = theme.heading(23, True)
+        tw = QFontMetrics(f).horizontalAdvance(self.title)
+        emoji_w = 34
+        total = tw + emoji_w * 2 + 30
+        x = (self.width() - total) / 2
+        bounce = (self._t % 2) * 2
+        theme.draw_emoji(p, theme.SPARKLES, x + 12, cy - bounce, 20)
+        theme.draw_outlined(p, self.title, x + emoji_w, cy + 8, f, C.plum, C.white,
+                            shadow=C.lav_mid, width=5)
+        theme.draw_emoji(p, theme.OTTER, x + emoji_w + tw + 20, cy, 22)
+        theme.draw_emoji(p, theme.SPARKLES, x + emoji_w + tw + 50, cy - (2 - bounce), 20)
         p.end()
 
     def mousePressEvent(self, e):
@@ -80,320 +127,19 @@ class TitleBar(QWidget):
         self.win.showNormal() if self.win.isMaximized() else self.win.showMaximized()
 
 
-class Sidebar(QWidget):
-    """Search box, Liked Songs, Recently Played and the user's playlists."""
-    searchSubmitted = Signal(str)
-    selected = Signal(object)  # Playlist
-
-    def __init__(self, images: ImageLoader, parent=None):
-        super().__init__(parent)
-        self.images = images
-        self.setFixedWidth(250)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 6, 4, 10)
-        lay.setSpacing(8)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("search songs...")
-        self.search.addAction(theme.icon("search", C.hot, 2),
-                              QLineEdit.ActionPosition.LeadingPosition)
-        self.search.returnPressed.connect(
-            lambda: self.search.text().strip() and self.searchSubmitted.emit(self.search.text().strip()))
-        lay.addWidget(self.search)
-        cap = QLabel("my mixtapes")
-        cap.setFont(theme.heading(14, True))
-        cap.setStyleSheet(f"color:{C.hot}; padding: 6px 6px 0 6px;")
-        lay.addWidget(cap)
-        self.list = QListWidget()
-        self.list.setIconSize(QSize(38, 38))
-        self.list.setFont(theme.body(21))
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.list.currentItemChanged.connect(self._changed)
-        lay.addWidget(self.list, 1)
-        self._items: dict[str, QListWidgetItem] = {}
-        images.loaded.connect(self._image_ready)
-        self.specials = [
-            Playlist("__liked", "Liked Songs", kind="liked"),
-            Playlist("__recent", "Recently Played", kind="recent"),
-        ]
-        self.set_playlists([])
-
-    def set_playlists(self, playlists: list[Playlist]):
-        self.list.blockSignals(True)
-        cur = self.current()
-        self.list.clear()
-        self._items.clear()
-        for pl in self.specials:
-            name = "heart" if pl.kind == "liked" else "clock"
-            ic = theme.still_icon(theme.pixmap(name, C.hot, 4))
-            self._add(pl, ic)
-        for pl in playlists:
-            self._add(pl, theme.still_icon(self.images.get(pl.image_url, 38, 9)))
-        if cur:
-            self.select_id(cur.id)  # keep the selection without reloading the view
-        self.list.blockSignals(False)
-
-    def _add(self, pl: Playlist, ic: QIcon):
-        it = QListWidgetItem(ic, pl.name)
-        it.setData(Qt.ItemDataRole.UserRole, pl)
-        it.setSizeHint(QSize(220, 48))
-        tip = pl.name + (f"\nby {pl.owner}" if pl.owner else "")
-        if pl.total:
-            tip += f"\n{pl.total} songs"
-        it.setToolTip(tip)
-        self.list.addItem(it)
-        self._items[pl.id] = it
-
-    def _image_ready(self, url):
-        for it in self._items.values():
-            pl: Playlist = it.data(Qt.ItemDataRole.UserRole)
-            if pl.image_url == url:
-                it.setIcon(theme.still_icon(self.images.get(url, 38, 9)))
-
-    def _changed(self, cur, _prev):
-        if cur:
-            self.selected.emit(cur.data(Qt.ItemDataRole.UserRole))
-
-    def current(self) -> Playlist | None:
-        it = self.list.currentItem()
-        return it.data(Qt.ItemDataRole.UserRole) if it else None
-
-    def select_id(self, pid: str):
-        it = self._items.get(pid)
-        if it:
-            self.list.setCurrentItem(it)
-
-
-class PlaylistHeader(QWidget):
-    """Big cover + title + play/shuffle-play buttons at the top of the song list."""
-    playClicked = Signal()
-    shuffleClicked = Signal()
-
-    def __init__(self, images: ImageLoader, parent=None):
-        super().__init__(parent)
-        self.images = images
-        self.pl: Playlist | None = None
-        self.setFixedHeight(168)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 8)
-        lay.setSpacing(18)
-        self.cover = QLabel()
-        self.cover.setFixedSize(140, 140)
-        lay.addWidget(self.cover)
-        col = QVBoxLayout()
-        col.setSpacing(4)
-        self.kicker = QLabel("PLAYLIST")
-        self.kicker.setFont(theme.heading(12, True))
-        self.kicker.setStyleSheet(f"color:{C.hot}; letter-spacing: 2px;")
-        self.title = QLabel("")
-        self.title.setFont(theme.heading(30, True))
-        self.title.setStyleSheet(f"color:{C.plum};")
-        self.meta = QLabel("")
-        self.meta.setObjectName("hint")
-        row = QHBoxLayout()
-        row.setSpacing(10)
-        self.btn_play = QPushButton("  play  ")
-        self.btn_play.setObjectName("primary")
-        self.btn_play.setIcon(theme.icon("play", C.white, 2))
-        self.btn_shuffle = QPushButton("shuffle")
-        self.btn_shuffle.setIcon(theme.icon("shuffle", C.hot, 2))
-        for b in (self.btn_play, self.btn_shuffle):
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            row.addWidget(b)
-        row.addStretch(1)
-        self.btn_play.clicked.connect(self.playClicked)
-        self.btn_shuffle.clicked.connect(self.shuffleClicked)
-        col.addStretch(1)
-        for w in (self.kicker, self.title, self.meta):
-            col.addWidget(w)
-        col.addSpacing(6)
-        col.addLayout(row)
-        col.addStretch(1)
-        lay.addLayout(col, 1)
-        images.loaded.connect(lambda u: self.pl and u == self.pl.image_url and self._cover())
-
-    def show_playlist(self, pl: Playlist, count: int | None = None, note: str = ""):
-        self.pl = pl
-        kinds = {"liked": "YOUR FAVES", "recent": "ON REPEAT LATELY", "search": "SEARCH"}
-        self.kicker.setText(kinds.get(pl.kind, "PLAYLIST"))
-        fm = QFontMetrics(self.title.font())
-        self.title.setText(fm.elidedText(pl.name, Qt.TextElideMode.ElideRight,
-                                         max(200, self.width() - 220)))
-        self.title.setToolTip(pl.name)
-        bits = []
-        if pl.owner:
-            bits.append(f"by {pl.owner}")
-        n = count if count is not None else pl.total
-        if n:
-            bits.append(f"{n} songs")
-        if note:
-            bits.append(note)
-        self.meta.setText("  ♡  ".join(bits))
-        self.btn_shuffle.setVisible(pl.kind != "search")
-        self._cover()
-
-    def _cover(self):
-        pl = self.pl
-        if not pl:
-            return
-        if pl.kind in ("liked", "recent", "search"):
-            pm = QPixmap(280, 280)
-            pm.setDevicePixelRatio(2)
-            pm.fill(Qt.GlobalColor.transparent)
-            p = QPainter(pm)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            col = {"liked": C.shell, "recent": C.lavender, "search": C.mint}[pl.kind]
-            p.setBrush(QColor(col))
-            p.setPen(QPen(QColor(C.white), 4))
-            p.drawRoundedRect(QRectF(2, 2, 136, 136), 18, 18)
-            icon = {"liked": "heart", "recent": "clock", "search": "search"}[pl.kind]
-            theme.draw_icon(p, icon, C.white, 70, 70, 6)
-            p.end()
-            self.cover.setPixmap(pm)
-        else:
-            self.cover.setPixmap(self.images.get(pl.image_url, 140, 18))
-
-
-class NowPlaying(QWidget):
-    """Right-hand panel: vinyl cover, title, progress, transport, volume, speaker."""
-    playPause = Signal()
-    nextClicked = Signal()
-    prevClicked = Signal()
-    shuffleToggled = Signal(bool)
-    repeatClicked = Signal()
-    seekTo = Signal(int)
-    volumeTo = Signal(int)
-    speakerClicked = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedWidth(320)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 12, 16, 14)
-        lay.setSpacing(6)
-        cap = QLabel("now playing")
-        cap.setFont(theme.heading(14, True))
-        cap.setStyleSheet(f"color:{C.hot};")
-        cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(cap)
-        self.cover = VinylCover(205)
-        lay.addWidget(self.cover, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.title = MarqueeLabel(theme.heading(19, True), C.plum)
-        self.artist = MarqueeLabel(theme.body(22), C.plum_soft)
-        lay.addWidget(self.title)
-        lay.addWidget(self.artist)
-        self.progress = HeartSlider(1000)
-        self.progress.released.connect(self.seekTo)
-        lay.addWidget(self.progress)
-        times = QHBoxLayout()
-        self.t_pos = QLabel("0:00")
-        self.t_len = QLabel("0:00")
-        for t in (self.t_pos, self.t_len):
-            t.setFont(theme.body(18))
-            t.setStyleSheet(f"color:{C.plum_soft};")
-        times.setContentsMargins(12, 0, 12, 0)
-        times.addWidget(self.t_pos)
-        times.addStretch(1)
-        times.addWidget(self.t_len)
-        lay.addLayout(times)
-        self.progress.moved.connect(lambda v: self.t_pos.setText(fmt_ms(v)))
-
-        row = QHBoxLayout()
-        row.setSpacing(2)
-        self.b_shuffle = PixelButton("shuffle", 36, 2, tooltip="Shuffle")
-        self.b_shuffle.setCheckable(True)
-        self.b_prev = PixelButton("prev", 42, 2.4, tooltip="Previous (Ctrl+Left)")
-        self.b_play = PixelButton("play", 58, 3.2, fill=C.hot, ink=C.hot, tooltip="Play / pause (Space)")
-        self.b_play.setCheckable(True)
-        self.b_next = PixelButton("next", 42, 2.4, tooltip="Next (Ctrl+Right)")
-        self.b_repeat = PixelButton("repeat", 36, 2, tooltip="Repeat: off")
-        self.b_repeat.setCheckable(True)
-        row.addStretch(1)
-        for b in (self.b_shuffle, self.b_prev, self.b_play, self.b_next, self.b_repeat):
-            row.addWidget(b, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addStretch(1)
-        lay.addLayout(row)
-        self.b_play.setChecked(True)
-        self.b_play.clicked.connect(lambda: (self.b_play.setChecked(True), self.playPause.emit()))
-        self.b_next.clicked.connect(self.nextClicked)
-        self.b_prev.clicked.connect(self.prevClicked)
-        self.b_shuffle.clicked.connect(lambda: self.shuffleToggled.emit(self.b_shuffle.isChecked()))
-        self.b_repeat.clicked.connect(self.repeatClicked)
-
-        vol = QHBoxLayout()
-        vol.setContentsMargins(6, 4, 6, 0)
-        spk = QLabel()
-        spk.setPixmap(theme.pixmap("speaker", C.hot, 2))
-        self.volume = HeartSlider(100, 24)
-        self.volume.released.connect(self.volumeTo)
-        vol.addWidget(spk)
-        vol.addWidget(self.volume, 1)
-        lay.addLayout(vol)
-
-        self.speaker = SpeakerChip()
-        self.speaker.clicked.connect(self.speakerClicked)
-        lay.addSpacing(4)
-        lay.addWidget(self.speaker)
-        lay.addStretch(1)
-        self._repeat = "off"
-
-    # --- updates from the controller ---
-    def set_track(self, title: str, artist: str, duration_ms: int, pixmap):
-        self.title.setText(title or "nothing playing")
-        self.artist.setText(artist or "pick a song, cutie")
-        self.progress.set_maximum(max(1, duration_ms))
-        self.t_len.setText(fmt_ms(duration_ms))
-        self.cover.set_pixmap(pixmap)
-
-    def set_progress(self, ms: int):
-        if not self.progress.dragging:
-            self.progress.set_value(ms)
-            self.t_pos.setText(fmt_ms(ms))
-
-    def set_playing(self, playing: bool):
-        self.b_play.set_icon("pause" if playing else "play")
-        self.cover.set_playing(playing)
-
-    def set_shuffle(self, on: bool):
-        self.b_shuffle.setChecked(on)
-
-    def set_repeat(self, mode: str):
-        self._repeat = mode
-        self.b_repeat.setChecked(mode != "off")
-        self.b_repeat.badge = "1" if mode == "track" else ""
-        self.b_repeat.setToolTip({"off": "Repeat: off", "context": "Repeat: all",
-                                  "track": "Repeat: this song"}[mode])
-        self.b_repeat.update()
-
-    @property
-    def repeat_mode(self) -> str:
-        return self._repeat
-
-    def set_volume(self, v: int | None):
-        self.volume.setEnabled(v is not None)
-        if v is not None and not self.volume.dragging:
-            self.volume.set_value(v)
-
-    def set_speaker(self, phase: str, detail: str):
-        self.speaker.set_status(phase, detail)
-
-    @property
-    def speaker_phase(self) -> str:
-        return self.speaker.phase
-
-
 class SpeakerChip(QWidget):
     """Status pill for the built-in speaker: a blinking light plus a short message."""
     clicked = Signal()
     COLORS = {"ready": C.mint, "starting": C.butter, "login": C.lavender,
-              "elsewhere": C.butter, "error": C.shell_dark, "missing": C.shell_dark,
+              "elsewhere": C.butter, "error": C.hot, "missing": C.hot,
               "off": C.plum_soft}
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.phase, self.detail = "starting", "warming up the speaker"
         self._blink = True
-        self.setFixedHeight(54)
+        self.setFixedHeight(48)
+        self.setMinimumWidth(180)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         t = QTimer(self)
         t.timeout.connect(self._tick)
@@ -419,31 +165,130 @@ class SpeakerChip(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(6, 4, -6, -4)
-        p.setPen(QPen(QColor(C.shell), 3))
-        p.setBrush(QColor(C.white))
-        p.drawRoundedRect(r, 16, 16)
-        # little speaker icon + status light
-        theme.draw_icon(p, "speaker", C.hot, r.left() + 22, r.center().y(), 2.2)
+        r = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        p.setPen(QPen(QColor(C.lav_mid), 2.5))
+        p.setBrush(QColor(255, 255, 255, 215))
+        p.drawRoundedRect(r, 14, 14)
         light = QColor(self.COLORS.get(self.phase, C.butter))
         if not self._blink:
-            light.setAlpha(70)
+            light.setAlpha(60)
         p.setBrush(light)
         p.setPen(QPen(QColor(C.plum), 1.5))
-        p.drawEllipse(QPointF(r.left() + 47, r.top() + 14), 5, 5)
-        p.setPen(QColor(C.plum))
-        p.setFont(theme.heading(12, True))
-        title = {"ready": "this computer", "elsewhere": "this computer",
+        p.drawEllipse(QPointF(r.left() + 16, r.center().y()), 6, 6)
+        title = {"ready": "playing on this computer", "elsewhere": "playing elsewhere",
                  "login": "speaker login", "missing": "speaker missing",
-                 "error": "speaker trouble", "off": "speaker off"}.get(self.phase, "speaker")
-        tx = r.left() + 58
-        p.drawText(QRectF(tx, r.top() + 4, r.width() - tx, 20),
+                 "error": "speaker trouble", "off": "speaker off"}.get(self.phase,
+                                                                      "speaker warming up")
+        tx = r.left() + 30
+        p.setFont(theme.heading(12, True))
+        p.setPen(QColor(C.plum))
+        p.drawText(QRectF(tx, r.top() + 3, r.width() - 36, 18),
                    Qt.AlignmentFlag.AlignVCenter, title)
         p.setFont(theme.body(17))
         p.setPen(QColor(C.plum_soft))
         fm = QFontMetrics(p.font())
-        p.drawText(QRectF(r.left() + 40, r.top() + 24, r.right() - r.left() - 48, 20),
-                   Qt.AlignmentFlag.AlignVCenter,
-                   fm.elidedText(self.detail, Qt.TextElideMode.ElideRight,
-                                 int(r.right() - r.left() - 52)))
+        p.drawText(QRectF(tx, r.top() + 20, r.width() - 36, 18), Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(self.detail, Qt.TextElideMode.ElideRight, int(r.width() - 38)))
         p.end()
+
+
+class PlaylistHeader(QWidget):
+    """Compact header above the song list: cover, name, play + shuffle."""
+    playClicked = Signal()
+    shuffleClicked = Signal()
+
+    def __init__(self, images: ImageLoader, parent=None):
+        super().__init__(parent)
+        self.images = images
+        self.pl: Playlist | None = None
+        self.setFixedHeight(96)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(12, 8, 12, 4)
+        lay.setSpacing(12)
+        self.cover = QLabel()
+        self.cover.setFixedSize(72, 72)
+        lay.addWidget(self.cover)
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        self.kicker = QLabel("PLAYLIST")
+        self.kicker.setFont(theme.heading(11, True))
+        self.kicker.setStyleSheet(f"color:{C.hot}; letter-spacing: 1px;")
+        self.title = QLabel("")
+        self.title.setFont(theme.heading(18, True))
+        self.title.setStyleSheet(f"color:{C.plum};")
+        self.meta = QLabel("")
+        self.meta.setFont(theme.body(18))
+        self.meta.setStyleSheet(f"color:{C.plum_soft};")
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self.btn_play = QPushButton(" play")
+        self.btn_play.setObjectName("primary")
+        self.btn_play.setIcon(theme.icon("play", C.white, 1))
+        self.btn_shuffle = QPushButton(" shuffle")
+        self.btn_shuffle.setIcon(theme.icon("shuffle", C.hot, 1))
+        for b in (self.btn_play, self.btn_shuffle):
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet("padding: 2px 10px; font-size: 13px;")
+            row.addWidget(b)
+        row.addStretch(1)
+        self.btn_play.clicked.connect(self.playClicked)
+        self.btn_shuffle.clicked.connect(self.shuffleClicked)
+        for w in (self.kicker, self.title, self.meta):
+            col.addWidget(w)
+        col.addLayout(row)
+        lay.addLayout(col, 1)
+        images.loaded.connect(lambda u: self.pl and u == self.pl.image_url and self._cover())
+
+    def show_playlist(self, pl: Playlist, count: int | None = None, note: str = ""):
+        self.pl = pl
+        kinds = {"liked": "YOUR FAVES ♡", "recent": "ON REPEAT LATELY",
+                 "search": "SEARCH"}
+        self.kicker.setText(kinds.get(pl.kind, "PLAYLIST"))
+        fm = QFontMetrics(self.title.font())
+        self.title.setText(fm.elidedText(pl.name, Qt.TextElideMode.ElideRight,
+                                         max(120, self.width() - 110)))
+        self.title.setToolTip(pl.name)
+        bits = []
+        n = count if count is not None else pl.total
+        if n:
+            bits.append(f"{n} songs")
+        if pl.owner:
+            bits.append(f"by {pl.owner}")
+        if note:
+            bits.append(note)
+        self.meta.setText("  ♡  ".join(bits))
+        self.btn_shuffle.setVisible(pl.kind != "search")
+        self._cover()
+
+    def _cover(self):
+        pl = self.pl
+        if not pl:
+            return
+        if pl.kind in ("liked", "recent", "search"):
+            self.cover.setPixmap(tile_pixmap(pl.kind, 72))
+        else:
+            self.cover.setPixmap(self.images.get(pl.image_url, 72, 12))
+
+
+def tile_pixmap(kind: str, size: int) -> QPixmap:
+    """Pastel square with a pixel icon, used for Liked / Recent / Search / Favorites."""
+    from PySide6.QtGui import QLinearGradient
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    cols = {"liked": ("#ffc4e6", "#ff9ec7"), "recent": ("#e7dbff", "#c3a8ff"),
+            "search": ("#d6fff1", "#a9e8d6"), "favorites": ("#fff6c8", "#ffd86b")}
+    a, b = cols.get(kind, cols["liked"])
+    g = QLinearGradient(0, 0, size, size)
+    g.setColorAt(0, QColor(a))
+    g.setColorAt(1, QColor(b))
+    p.setBrush(g)
+    p.setPen(QPen(QColor(C.white), 2))
+    p.drawRoundedRect(QRectF(1, 1, size - 2, size - 2), size * 0.2, size * 0.2)
+    icon = {"liked": "heart", "recent": "clock", "search": "search",
+            "favorites": "star"}.get(kind, "note")
+    theme.draw_icon(p, icon, C.white, size / 2, size / 2, size / 16)
+    p.end()
+    return pm

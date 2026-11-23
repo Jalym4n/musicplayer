@@ -11,20 +11,29 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 
 
 class C:
-    """Palette: bubblegum, cream, plum, with lavender and mint accents."""
-    bg = "#ffe3ef"
+    """Palette: lavender + bubblegum holographic, with cream notebook paper."""
+    bg = "#f1e6ff"
+    bg2 = "#ffe1f1"
     gingham = "#ffcfe3"
     gingham_dark = "#ffbcd8"
-    shell = "#ff9ec7"
-    shell_dark = "#f27bb0"
-    hot = "#e0569b"
-    plum = "#6b2d5c"
-    plum_soft = "#9a5a87"
-    cream = "#fff7fb"
-    white = "#ffffff"
+    shell = "#ff9ec7"          # bubblegum
+    shell_dark = "#e77fb6"
+    hot = "#e0569b"            # hot pink accents
+    pink_soft = "#ffc8e4"
     lavender = "#cdb4ff"
+    lav_mid = "#b79cf5"
+    lav_dark = "#8f6fd8"
+    plum = "#5b2b6e"           # main text
+    plum_soft = "#8d5f9c"
+    cream = "#fffaf0"          # notebook paper
+    paper_line = "#e6dcff"
+    white = "#ffffff"
     mint = "#b8f2e6"
     butter = "#fff1a8"
+    star = "#ffd86b"
+    screen = "#1a1322"         # black "screen" panels
+    screen_edge = "#3a2a4a"
+    lcd = "#efe1ff"
     vinyl = "#2b1d2a"
 
 
@@ -263,6 +272,77 @@ ICONS: dict[str, list[str]] = {
         ".X.XXX.X.",
         "...X.X...",
     ],
+    "candy": [
+        "X....XXXX....X",
+        "XX..XXooXX..XX",
+        "XXXXXoXXXXXXXX",
+        "XXXXXXXXXXXXXX",
+        "XXXXXXXXXoXXXX",
+        "XX..XXooXX..XX",
+        "X....XXXX....X",
+    ],
+    "star": [
+        "....X....",
+        "...XXX...",
+        "XXXXXXXXX",
+        ".XXXXXXX.",
+        "..XXXXX..",
+        ".XXX.XXX.",
+        "XX.....XX",
+    ],
+    "flower": [
+        "...XXX...",
+        "..XXXXX..",
+        "XX.XXX.XX",
+        "XXXoooXXX",
+        ".XXoooXX.",
+        "XXXoooXXX",
+        "XX.XXX.XX",
+        "..XXXXX..",
+        "...XXX...",
+    ],
+    "rewind": [
+        "...X...X.",
+        "..XX..XX.",
+        ".XXX.XXX.",
+        "XXXXXXXX.",
+        ".XXX.XXX.",
+        "..XX..XX.",
+        "...X...X.",
+    ],
+    "ffwd": [
+        ".X...X...",
+        ".XX..XX..",
+        ".XXX.XXX.",
+        ".XXXXXXXX",
+        ".XXX.XXX.",
+        ".XX..XX..",
+        ".X...X...",
+    ],
+    "bubble": [
+        ".XXXXXXXXX.",
+        "XoooooooooX",
+        "XooXoXoXooX",
+        "XoooooooooX",
+        ".XXXXXXXXX.",
+        "..XX.......",
+        ".X.........",
+    ],
+    "square": [
+        "XXXXXXX",
+        "X.....X",
+        "X.....X",
+        "X.....X",
+        "XXXXXXX",
+    ],
+    "mini": [
+        "XXXXXXXXX",
+        "X.......X",
+        "X.......X",
+        "X...XXXXX",
+        "X...XoooX",
+        "XXXXXXXXX",
+    ],
     "device": [
         "XXXXXXXXX",
         "X.......X",
@@ -276,7 +356,7 @@ ICONS: dict[str, list[str]] = {
 
 
 @lru_cache(maxsize=512)
-def pixmap(name: str, color: str, px: int = 3) -> QPixmap:
+def pixmap(name: str, color: str, px: int = 3, color2: str = "#ffffff") -> QPixmap:
     """Render a pixel icon with each bitmap pixel drawn as a px*px square."""
     grid = ICONS[name]
     w, h = max(len(r) for r in grid), len(grid)
@@ -285,10 +365,10 @@ def pixmap(name: str, color: str, px: int = 3) -> QPixmap:
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(color))
     for y, row in enumerate(grid):
         for x, ch in enumerate(row):
-            if ch == "X":
+            if ch in "Xo":
+                p.setBrush(QColor(color if ch == "X" else color2))
                 p.drawRect(QRectF(x * px, y * px, px, px))
     p.end()
     return pm
@@ -306,16 +386,64 @@ def still_icon(pm: QPixmap) -> QIcon:
     return ic
 
 
-def draw_icon(p: QPainter, name: str, color: str, cx: float, cy: float, px: float) -> None:
+def draw_icon(p: QPainter, name: str, color: str, cx: float, cy: float, px: float,
+              color2: str = "#ffffff") -> None:
     """Draw an icon centred on (cx, cy) directly with a painter (for custom widgets)."""
     grid = ICONS[name]
     w, h = max(len(r) for r in grid), len(grid)
     x0, y0 = cx - w * px / 2, cy - h * px / 2
     p.save()
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(color))
+    c1, c2 = QColor(color), QColor(color2)
     for y, row in enumerate(grid):
         for x, ch in enumerate(row):
-            if ch == "X":
+            if ch in "Xo":
+                p.setBrush(c1 if ch == "X" else c2)
                 p.drawRect(QRectF(x0 + x * px, y0 + y * px, px + 0.01, px + 0.01))
     p.restore()
+
+
+EMOJI_FAMILIES = ["Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color"]
+OTTER = "\U0001F9A6"       # 🦦  (drawn by the system emoji font: Apple's otter on a Mac)
+SPARKLES = "\u2728"        # ✨
+
+
+def emoji_font(px: int) -> QFont:
+    f = QFont()
+    f.setFamilies(EMOJI_FAMILIES)
+    f.setPixelSize(px)
+    return f
+
+
+def draw_emoji(p: QPainter, text: str, cx: float, cy: float, px: int) -> None:
+    """Draw a colour emoji centred on (cx, cy)."""
+    p.save()
+    p.setFont(emoji_font(px))
+    r = QRectF(cx - px, cy - px, px * 2, px * 2)
+    p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
+    p.restore()
+
+
+def draw_outlined(p: QPainter, text: str, x: float, baseline: float, font: QFont,
+                  fill: str, outline: str = "#ffffff", shadow: str | None = None,
+                  width: float = 4.0) -> float:
+    """Bubbly sticker text: shadow, thick outline, then fill. Returns the text width."""
+    from PySide6.QtGui import QFontMetricsF, QPainterPath, QPen
+    path = QPainterPath()
+    path.addText(x, baseline, font, text)
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if shadow:
+        p.setPen(QPen(QColor(shadow), width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                      Qt.PenJoinStyle.RoundJoin))
+        p.setBrush(QColor(shadow))
+        p.drawPath(path.translated(1.5, 2.5))
+    p.setPen(QPen(QColor(outline), width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                  Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(QColor(outline))
+    p.drawPath(path)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(fill))
+    p.drawPath(path)
+    p.restore()
+    return QFontMetricsF(font).horizontalAdvance(text)

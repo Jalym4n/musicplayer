@@ -14,6 +14,7 @@ class Track:
     image_url: str = ""
     duration_ms: int = 0
     is_local: bool = False
+    year: str = ""
 
     @property
     def duration_text(self) -> str:

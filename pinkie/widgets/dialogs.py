@@ -35,7 +35,9 @@ class SettingsDialog(QDialog):
         lay.setContentsMargins(26, 22, 26, 22)
         lay.setSpacing(10)
 
-        title = QLabel("hi bestie! let's connect Spotify ♡" if first_run else "settings ♡")
+        name = settings.her_name
+        title = QLabel(f"hi {name}! let's connect Spotify \U0001F9A6" if first_run
+                       else "settings \u2661")
         title.setFont(theme.heading(22, True))
         title.setStyleSheet(f"color:{C.hot};")
         lay.addWidget(title)
@@ -60,6 +62,13 @@ class SettingsDialog(QDialog):
         links.addWidget(b_copy)
         links.addStretch(1)
         lay.addLayout(links)
+
+        nrow = QHBoxLayout()
+        nrow.addWidget(QLabel("who's this player for?"))
+        self.owner = QLineEdit(settings.owner_name or name)
+        self.owner.setPlaceholderText(name)
+        nrow.addWidget(self.owner, 1)
+        lay.addLayout(nrow)
 
         lay.addWidget(QLabel("Client ID"))
         self.client_id = QLineEdit(settings.client_id)
@@ -137,6 +146,7 @@ class SettingsDialog(QDialog):
 
     def _accept(self):
         self.settings.client_id = self.client_id.text().strip()
+        self.settings.owner_name = self.owner.text().strip()
         self.settings.librespot_path = self.lib_path.text().strip()
         self.settings.save()
         self.accept()

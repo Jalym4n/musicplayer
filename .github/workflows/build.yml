@@ -1,4 +1,4 @@
-name: Build Pinkie Player
+name: Build Aayusha's Music Player
 
 # Builds the double-click app (with the built-in speaker inside) for Windows, macOS
 # and Linux. Download the results from the run's "Artifacts" section.
@@ -18,14 +18,15 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: PinkiePlayer-Windows
+            artifact: AayushaMusicPlayer-Windows
           - os: macos-latest
-            artifact: PinkiePlayer-macOS
+            artifact: AayushaMusicPlayer-macOS
           - os: ubuntu-22.04
-            artifact: PinkiePlayer-Linux
+            artifact: AayushaMusicPlayer-Linux
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
+      APP: "Aayusha's Music Player"
     steps:
       - uses: actions/checkout@v4
 
@@ -69,16 +70,16 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent "dist/Pinkie Player.app" "${{ matrix.artifact }}.zip"
+        run: ditto -c -k --keepParent "dist/$APP.app" "${{ matrix.artifact }}.zip"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path "dist/Pinkie Player" -DestinationPath "${{ matrix.artifact }}.zip"
+        run: Compress-Archive -Path "dist/$env:APP" -DestinationPath "${{ matrix.artifact }}.zip"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
-        run: tar -C dist -czf "${{ matrix.artifact }}.tar.gz" "Pinkie Player"
+        run: tar -C dist -czf "${{ matrix.artifact }}.tar.gz" "$APP"
 
       - uses: actions/upload-artifact@v4
         with:

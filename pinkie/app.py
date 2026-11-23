@@ -8,7 +8,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from . import config, theme
+from . import config, personal, theme
 
 
 def app_icon() -> QIcon:
@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(config.APP_NAME)
+    app.setApplicationDisplayName(personal.title(config.Settings.load().her_name))
     app.setOrganizationName("Pinkie")
     app.setWindowIcon(app_icon())
     theme.load_fonts()

@@ -1,43 +1,66 @@
 """The main window and the logic that ties the UI to Spotify."""
 from __future__ import annotations
 
+import random
 import time
 import webbrowser
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QSizeGrip,
                                QVBoxLayout, QWidget)
 
-from . import config, theme
+from . import config, personal, theme
+from . import speaker as spk
 from .auth import AuthError, TokenManager, login
 from .images import ImageLoader
-from . import speaker as spk
 from .models import Device, PlaybackState, Playlist, Track
 from .spotify import NoActiveDevice, SpotifyClient, SpotifyError
 from .theme import C
-from .widgets.controls import gingham, rounded_path
+from .widgets.deck import Deck
 from .widgets.dialogs import SettingsDialog
-from .widgets.panels import NowPlaying, PlaylistHeader, Sidebar, TitleBar
-from .widgets.tracklist import TrackList
+from .widgets.miniplayer import MiniPlayer
+from .widgets.notebook import Heartbeat, Notebook
+from .widgets.panels import TitleBar
+from .widgets.side import Sidebar
 from .worker import run_async
 
 MARGIN = 14  # transparent space around the shell for the drop shadow
+READY_TEXT = "music comes out of your speakers ♡"
 
 
-class Card(QWidget):
-    def __init__(self, fill: str = "#b8ffffff", border: str = C.white, radius: int = 22,
-                 parent=None):
-        super().__init__(parent)
-        self.fill, self.border, self.radius = QColor(fill), QColor(border), radius
+class Fanout:
+    """Calls a method on every view that has it (the deck and the mini-player)."""
+
+    def __init__(self, *views):
+        self.views = views
+
+    def __getattr__(self, name):
+        def call(*args, **kwargs):
+            for v in self.views:
+                fn = getattr(v, name, None)
+                if fn:
+                    fn(*args, **kwargs)
+        return call
+
+
+class DeckCard(QWidget):
+    """Holographic lavender/pink panel behind the deck."""
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect()).adjusted(2, 2, -2, -2)
-        p.setPen(QPen(self.border, 3))
-        p.setBrush(self.fill)
-        p.drawRoundedRect(r, self.radius, self.radius)
+        g = QLinearGradient(r.topLeft(), r.bottomRight())
+        g.setColorAt(0, QColor("#efe2ff"))
+        g.setColorAt(0.5, QColor("#ffe3f3"))
+        g.setColorAt(1, QColor("#e3f1ff"))
+        p.setPen(QPen(QColor(C.white), 3))
+        p.setBrush(g)
+        p.drawRoundedRect(r, 18, 18)
+        p.setPen(QPen(QColor(C.lav_mid), 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 20, 20)
         p.end()
 
 
@@ -54,6 +77,7 @@ class MainWindow(QWidget):
         self._finding_speaker = False
         self.view: Playlist | None = None
         self.view_tracks: list[Track] = []
+        self.upnext_tracks: list[Track] = []
         self.track_cache: dict[str, list[Track]] = {}
         self._view_seq = 0
         self._polling = False
@@ -62,16 +86,20 @@ class MainWindow(QWidget):
         self._last_track_uri = None
         self._closing = False
 
-        self.setWindowTitle(config.APP_NAME)
+        self.title_text = personal.title(settings.her_name)
+        self.setWindowTitle(self.title_text)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
                             | Qt.WindowType.WindowMinimizeButtonHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(1180, 760)
-        self.setMinimumSize(980, 640)
+        self.resize(1280, 800)
+        self.setMinimumSize(1100, 700)
+        rnd = random.Random(8)
+        self._bg_stars = [(rnd.random(), rnd.random(), rnd.choice(["sparkle", "star"]))
+                          for _ in range(26)]
 
         self.images = ImageLoader(self)
         self.images.loaded.connect(self._image_loaded)
-        self.speaker = spk.Speaker(settings.device_name, self)
+        self.speaker = spk.Speaker(settings.speaker_name, self)
         self.speaker.phaseChanged.connect(self._speaker_phase)
         self.speaker.loginUrl.connect(self._speaker_login_url)
         self._speaker_url = ""
@@ -89,64 +117,64 @@ class MainWindow(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(MARGIN, MARGIN, MARGIN, MARGIN)
         outer.setSpacing(0)
-        self.titlebar = TitleBar(self)
+        self.titlebar = TitleBar(self, self.title_text)
         self.titlebar.settingsClicked.connect(self.open_settings)
+        self.titlebar.miniClicked.connect(self.toggle_mini)
         outer.addWidget(self.titlebar)
 
         body = QHBoxLayout()
-        body.setContentsMargins(14, 4, 14, 14)
+        body.setContentsMargins(14, 8, 14, 14)
         body.setSpacing(12)
 
-        side_card = Card()
-        sl = QVBoxLayout(side_card)
-        sl.setContentsMargins(4, 10, 4, 6)
-        self.sidebar = Sidebar(self.images)
+        self.sidebar = Sidebar(self.images, self.settings.her_name, self.settings.favorites)
         self.sidebar.selected.connect(self.open_view)
         self.sidebar.searchSubmitted.connect(self.search)
-        sl.addWidget(self.sidebar)
-        body.addWidget(side_card)
+        self.sidebar.favoritesChanged.connect(self._save_favorites)
+        body.addWidget(self.sidebar)
 
-        center = Card(fill="#e6fff7fb")  # Qt reads 8-digit hex as #AARRGGBB
-        cl = QVBoxLayout(center)
-        cl.setContentsMargins(6, 6, 6, 10)
-        cl.setSpacing(0)
-        self.header = PlaylistHeader(self.images)
-        self.header.playClicked.connect(lambda: self.play_view(shuffle=False))
-        self.header.shuffleClicked.connect(lambda: self.play_view(shuffle=True))
-        cl.addWidget(self.header)
-        self.tracks = TrackList(self.images)
-        self.tracks.playRequested.connect(self.play_row)
-        cl.addWidget(self.tracks, 1)
-        self.empty = QLabel("")
-        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty.setWordWrap(True)
-        self.empty.setFont(theme.body(24))
-        self.empty.setStyleSheet(f"color:{C.plum_soft}; padding: 30px;")
-        cl.addWidget(self.empty, 1)
-        self.empty.hide()
-        body.addWidget(center, 1)
+        card = DeckCard()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(4, 4, 4, 4)
+        self.deck = Deck()
+        cl.addWidget(self.deck)
+        body.addWidget(card, 1)
 
-        np_card = Card()
-        nl = QVBoxLayout(np_card)
-        nl.setContentsMargins(4, 4, 0, 4)
-        self.np = NowPlaying()
-        nl.addWidget(self.np)
-        body.addWidget(np_card)
-        self.np.set_track("", "", 0, None)
-        self.np.playPause.connect(self.toggle_play)
-        self.np.nextClicked.connect(lambda: self._cmd("next"))
-        self.np.prevClicked.connect(lambda: self._cmd("previous"))
-        self.np.shuffleToggled.connect(self.set_shuffle)
-        self.np.repeatClicked.connect(self.cycle_repeat)
-        self.np.seekTo.connect(self.seek)
-        self.np.volumeTo.connect(self.set_volume)
-        self.np.speakerClicked.connect(self._speaker_clicked)
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        self.notebook = Notebook(self.images)
+        self.notebook.setFixedWidth(350)
+        self.notebook.upNextPlay.connect(self.play_upnext)
+        self.notebook.header.playClicked.connect(lambda: self.play_view(shuffle=False))
+        self.notebook.header.shuffleClicked.connect(lambda: self.play_view(shuffle=True))
+        self.notebook.tracks.playRequested.connect(self.play_row)
+        self.notebook.tab_next.clicked.connect(self.refresh_queue)
+        self.header, self.tracks, self.empty = (self.notebook.header, self.notebook.tracks,
+                                                self.notebook.empty)
+        self.heartbeat = Heartbeat()
+        self.heartbeat.setFixedWidth(350)
+        right.addWidget(self.notebook, 1)
+        right.addWidget(self.heartbeat)
+        body.addLayout(right)
         outer.addLayout(body, 1)
+
+        self.mini = MiniPlayer()
+        self.views = Fanout(self.deck, self.mini)
+        for view in (self.deck, self.mini):
+            view.playPause.connect(self.toggle_play)
+            view.nextClicked.connect(lambda: self._cmd("next"))
+            view.prevClicked.connect(lambda: self._cmd("previous"))
+            view.seekTo.connect(self.seek)
+        self.deck.shuffleToggled.connect(self.set_shuffle)
+        self.deck.repeatClicked.connect(self.cycle_repeat)
+        self.deck.volumeTo.connect(self.set_volume)
+        self.deck.speakerClicked.connect(self._speaker_clicked)
+        self.mini.restoreMain.connect(self.restore_from_mini)
 
         self.toast = QLabel(self)
         self.toast.setFont(theme.heading(14))
         self.toast.setStyleSheet(
-            f"background:{C.plum}; color:{C.white}; border-radius: 16px; padding: 8px 18px;")
+            f"background:{C.plum}; color:{C.white}; border-radius: 16px; padding: 8px 18px;"
+            f"border: 2px solid {C.pink_soft};")
         self.toast.hide()
         self.toast_timer = QTimer(self)
         self.toast_timer.setSingleShot(True)
@@ -158,44 +186,48 @@ class MainWindow(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        self.grip.move(self.width() - MARGIN - 26, self.height() - MARGIN - 26)
+        self.grip.move(self.width() - MARGIN - 24, self.height() - MARGIN - 24)
         self._place_toast()
 
     def _place_toast(self):
         self.toast.adjustSize()
         self.toast.move((self.width() - self.toast.width()) // 2,
-                        self.height() - MARGIN - self.toast.height() - 26)
+                        self.height() - MARGIN - self.toast.height() - 30)
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        shell = QRectF(self.rect()).adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
         maxed = self.isMaximized() or self.isFullScreen()
-        if maxed:
-            shell = QRectF(self.rect())
-        radius = 0 if maxed else 30
-        # soft shadow
+        shell = QRectF(self.rect()) if maxed else \
+            QRectF(self.rect()).adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
+        radius = 0 if maxed else 24
         if not maxed:
             for i in range(MARGIN, 0, -2):
-                c = QColor(C.plum)
-                c.setAlpha(int(6 + (MARGIN - i) * 1.2))
+                c = QColor(C.lav_dark)
+                c.setAlpha(int(6 + (MARGIN - i) * 1.3))
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(c)
                 p.drawRoundedRect(shell.adjusted(-i / 2, -i / 2 + 3, i / 2, i / 2 + 3),
                                   radius + i / 2, radius + i / 2)
-        # pink plastic shell
-        p.setBrush(QColor(C.shell))
-        p.setPen(QPen(QColor(C.shell_dark), 3))
+        g = QLinearGradient(shell.topLeft(), shell.bottomRight())
+        g.setColorAt(0, QColor("#f6e9ff"))
+        g.setColorAt(0.55, QColor("#fde6f4"))
+        g.setColorAt(1, QColor("#e9e2ff"))
+        p.setBrush(g)
+        p.setPen(QPen(QColor(C.lav_dark), 2))
         p.drawRoundedRect(shell, radius, radius)
-        # gingham "screen"
-        inner = shell.adjusted(10, 46, -10, -10)
-        p.save()
-        p.setClipPath(rounded_path(inner, 22))
-        gingham(p, inner)
-        p.restore()
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(C.white), 4))
-        p.drawRoundedRect(inner, 22, 22)
+        for fx, fy, name in self._bg_stars:
+            theme.draw_icon(p, name, "#80ffffff", shell.left() + fx * shell.width(),
+                            shell.top() + 60 + fy * (shell.height() - 70), 1.4)
+        # title strip
+        strip = QRectF(shell.left() + 6, shell.top() + 6, shell.width() - 12, 50)
+        sg = QLinearGradient(strip.topLeft(), strip.topRight())
+        sg.setColorAt(0, QColor("#ffc9e6"))
+        sg.setColorAt(0.5, QColor("#f2d4ff"))
+        sg.setColorAt(1, QColor("#cfc0ff"))
+        p.setBrush(sg)
+        p.setPen(QPen(QColor(C.white), 3))
+        p.drawRoundedRect(strip, radius - 6 if radius else 0, radius - 6 if radius else 0)
         p.end()
 
     def _shortcuts(self):
@@ -204,7 +236,24 @@ class MainWindow(QWidget):
         QShortcut(QKeySequence("Ctrl+Left"), self, lambda: self._cmd("previous"))
         QShortcut(QKeySequence("Ctrl+F"), self, lambda: (self.sidebar.search.setFocus(),
                                                          self.sidebar.search.selectAll()))
+        QShortcut(QKeySequence("Ctrl+M"), self, self.toggle_mini)
         QShortcut(QKeySequence("Ctrl+Q"), self, self.close)
+
+    # ------------------------------------------------------------------ mini-player
+    def toggle_mini(self):
+        if self.mini.isVisible():
+            self.mini.hide()
+            return
+        geo = self.frameGeometry()
+        self.mini.move(geo.right() - self.mini.width() - 20, geo.bottom() - self.mini.height() - 20)
+        self.mini.show()
+        self.mini.raise_()
+
+    def restore_from_mini(self):
+        self.mini.hide()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     # ------------------------------------------------------------------ toasts
     def say(self, text: str, ms: int = 3500):
@@ -241,6 +290,7 @@ class MainWindow(QWidget):
             dlg = SettingsDialog(self.settings, first_run=True, parent=None)
             if dlg.exec() != SettingsDialog.DialogCode.Accepted:
                 return False
+            self._apply_name()
         token = config.load_token()
         if token:
             self.client = SpotifyClient(TokenManager(self.settings.client_id, token))
@@ -250,6 +300,7 @@ class MainWindow(QWidget):
         return True
 
     def _login(self):
+        self.notebook.show_page(1)
         self.empty.setText("a Spotify login page just opened in your browser.\n"
                            "log in there, then come right back ♡")
         self._show_empty(True)
@@ -266,10 +317,7 @@ class MainWindow(QWidget):
         run_async(login, cid, webbrowser.open, on_done=done, on_error=fail)
 
     def _after_login(self):
-        def got_me(me):
-            name = (me or {}).get("display_name") or "cutie"
-            self.say(f"hi {name}! ♡")
-        run_async(self.client.me, on_done=got_me, on_error=self._error)
+        self.say(f"hi {self.settings.her_name}! {theme.OTTER}♡", 5000)
         self.refresh_playlists()
         self.sidebar.select_id("__liked")
         self._start_speaker()
@@ -280,17 +328,30 @@ class MainWindow(QWidget):
         run_async(self.client.playlists, on_done=self.sidebar.set_playlists,
                   on_error=self._error)
 
+    def _save_favorites(self, ids: list):
+        self.settings.favorites = ids
+        self.settings.save()
+
+    def _apply_name(self):
+        name = self.settings.her_name
+        self.title_text = personal.title(name)
+        self.titlebar.set_title(self.title_text)
+        self.sidebar.pal.set_name(name)
+        if not self.state.track:
+            self.setWindowTitle(self.title_text)
+
     # ------------------------------------------------------------------ speaker
     def _start_speaker(self):
         """Start the built-in speaker so music plays straight out of this computer."""
         if self.demo:
             self.speaker_id = "dev-here"
-            self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
+            self.views.set_speaker(spk.READY, READY_TEXT)
             return
+        self.speaker.name = self.settings.speaker_name
         self.speaker.start(spk.find_binary(self.settings.librespot_path))
 
     def _speaker_phase(self, phase: str, detail: str):
-        self.np.set_speaker(phase, detail)
+        self.views.set_speaker(phase, detail)
         if phase == spk.READY:
             self._find_speaker()
         elif phase == spk.LOGIN:
@@ -322,7 +383,7 @@ class MainWindow(QWidget):
         if self.demo or not self.client or (self._finding_speaker and attempt == 0):
             return
         self._finding_speaker = True
-        name = self.settings.device_name
+        name = self.settings.speaker_name
 
         def done(devs):
             self.devices = devs
@@ -331,7 +392,7 @@ class MainWindow(QWidget):
                 self._finding_speaker = False
                 first = not self.speaker_id
                 self.speaker_id = me.id
-                self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
+                self.views.set_speaker(spk.READY, READY_TEXT)
                 if first and not (self.state.device and self.state.device.is_active
                                   and self.state.is_playing):
                     # make this computer the active speaker, without blasting music
@@ -340,7 +401,7 @@ class MainWindow(QWidget):
                 QTimer.singleShot(1500, lambda: self._find_speaker(attempt + 1))
             else:
                 self._finding_speaker = False
-                self.np.set_speaker(spk.ERROR, "speaker didn't show up on Spotify")
+                self.views.set_speaker(spk.ERROR, "speaker didn't show up on Spotify")
 
         def fail(_e):
             if attempt < 20:
@@ -369,6 +430,7 @@ class MainWindow(QWidget):
         self.view = pl
         self._view_seq += 1
         seq = self._view_seq
+        self.notebook.show_page(1)
         self.header.show_playlist(pl)
         if pl.kind == "playlist" and not pl.readable:
             self.view_tracks = []
@@ -384,10 +446,13 @@ class MainWindow(QWidget):
                 return
         else:
             self.tracks.tmodel.set_tracks([])
-            self.empty.setText("loading ♡")
+            self.empty.setText(f"loading {theme.OTTER}")
             self._show_empty(True)
         fetch = {"liked": self.client.liked_tracks,
                  "recent": self.client.recently_played}.get(pl.kind)
+        if pl.kind == "search":
+            query = pl.id.split(":", 1)[1]
+            fetch = lambda: self.client.search(query)  # noqa: E731
         fn = fetch or (lambda: self.client.playlist_tracks(pl.id))
 
         def done(tracks):
@@ -428,6 +493,18 @@ class MainWindow(QWidget):
         self.track_cache.pop(pl.id, None)
         self.open_view(pl)
 
+    def refresh_queue(self):
+        if not self.client:
+            return
+
+        def done(tracks):
+            self.upnext_tracks = tracks
+            self.notebook.set_upnext(tracks)
+            self.notebook.upnext.tmodel.set_current(
+                self.state.track.uri if self.state.track else "")
+
+        run_async(self.client.queue, on_done=done, on_error=lambda e: None)
+
     # ------------------------------------------------------------------ playback
     def _play(self, **kw):
         if not self.speaker_id:
@@ -447,12 +524,14 @@ class MainWindow(QWidget):
             client.play(device_id=device, **kw)
 
         self.state.is_playing = True
-        self.np.set_playing(True)
+        self.views.set_playing(True)
+        self.heartbeat.set_playing(True)
         run_async(job, on_done=lambda _: self._refresh_soon(), on_error=self._play_failed)
 
     def _play_failed(self, exc):
         self.state.is_playing = False
-        self.np.set_playing(False)
+        self.views.set_playing(False)
+        self.heartbeat.set_playing(False)
         self._error(exc)
 
     def play_row(self, row: int):
@@ -463,6 +542,16 @@ class MainWindow(QWidget):
             self._play(context_uri=self.view.uri, offset_uri=t.uri)
         else:
             self._play(uris=[x.uri for x in self.view_tracks[row:row + 100]])
+
+    def play_upnext(self, row: int):
+        if row >= len(self.upnext_tracks):
+            return
+        t = self.upnext_tracks[row]
+        ctx = self.state.context_uri
+        if ctx and (ctx.startswith("spotify:playlist:") or ctx.startswith("spotify:album:")):
+            self._play(context_uri=ctx, offset_uri=t.uri)
+        else:
+            self._play(uris=[x.uri for x in self.upnext_tracks[row:]])
 
     def play_view(self, shuffle: bool):
         if not self.view:
@@ -476,7 +565,7 @@ class MainWindow(QWidget):
                 self._play(uris=[x.uri for x in self.view_tracks[:100]])
 
         if shuffle or self.state.shuffle != shuffle:
-            self.np.set_shuffle(shuffle)
+            self.views.set_shuffle(shuffle)
             self.state.shuffle = shuffle
             # shuffle needs an active device; if it fails, play() still starts the music
             run_async(client.shuffle, shuffle, self.speaker_id,
@@ -489,18 +578,19 @@ class MainWindow(QWidget):
             return
         if self.state.is_playing:
             self.state.is_playing = False
-            self.np.set_playing(False)
+            self.views.set_playing(False)
+            self.heartbeat.set_playing(False)
             self._sync_progress()
             self._cmd("pause")
         elif self.state.track:
             self.state.is_playing = True
             self.state_at = time.monotonic()
-            self.np.set_playing(True)
+            self.views.set_playing(True)
             self._play()
         elif self.view_tracks:
             self.play_row(0)
         else:
-            self.say("pick a song first ♡")
+            self.say("pick a song first, cutie ♡")
 
     def _cmd(self, name: str, *args):
         if not self.client:
@@ -513,8 +603,8 @@ class MainWindow(QWidget):
         self._cmd("shuffle", on)
 
     def cycle_repeat(self):
-        nxt = {"off": "context", "context": "track", "track": "off"}[self.np.repeat_mode]
-        self.np.set_repeat(nxt)
+        nxt = {"off": "context", "context": "track", "track": "off"}[self.deck.repeat_mode]
+        self.views.set_repeat(nxt)
         self.state.repeat = nxt
         self._cmd("repeat", nxt)
 
@@ -560,19 +650,24 @@ class MainWindow(QWidget):
         if uri != self._last_track_uri:
             self._last_track_uri = uri
             pm = self.images.raw(t.image_url) if t else None
-            self.np.set_track(t.name if t else "", t.artists if t else "",
-                              t.duration_ms if t else 0, pm)
+            if t:
+                self.views.set_track(t.name, t.artists, t.duration_ms, pm, t.album, t.year)
+            else:
+                self.views.set_track("", "", 0, None)
             self.tracks.tmodel.set_current(uri)
-            self.setWindowTitle(f"{t.name} - {config.APP_NAME}" if t else config.APP_NAME)
-        self.np.set_playing(s.is_playing)
-        self.np.set_shuffle(s.shuffle)
-        self.np.set_repeat(s.repeat if s.repeat in ("off", "context", "track") else "off")
-        self.np.set_volume(s.volume)
-        self.np.set_progress(s.progress_ms)
+            self.notebook.upnext.tmodel.set_current(uri)
+            self.setWindowTitle(f"{t.name} ♡ {self.title_text}" if t else self.title_text)
+            self.refresh_queue()
+        self.views.set_playing(s.is_playing)
+        self.heartbeat.set_playing(s.is_playing)
+        self.views.set_shuffle(s.shuffle)
+        self.views.set_repeat(s.repeat if s.repeat in ("off", "context", "track") else "off")
+        self.views.set_volume(s.volume)
+        self.views.set_progress(s.progress_ms)
         if self.speaker_id and s.device and s.device.id and s.device.id != self.speaker_id:
-            self.np.set_speaker("elsewhere", f"playing on {s.device.name}: tap to bring it here")
-        elif self.speaker_id and self.np.speaker_phase == "elsewhere":
-            self.np.set_speaker(spk.READY, "music comes out of your speakers ♡")
+            self.views.set_speaker("elsewhere", f"playing on {s.device.name}: tap to bring it here")
+        elif self.speaker_id and self.deck.speaker_phase == "elsewhere":
+            self.views.set_speaker(spk.READY, READY_TEXT)
 
     def _sync_progress(self):
         self.state.progress_ms = self._current_pos()
@@ -589,18 +684,19 @@ class MainWindow(QWidget):
         if not self.state.track:
             return
         pos = self._current_pos()
-        self.np.set_progress(pos)
+        self.views.set_progress(pos)
         if self.state.is_playing and pos >= self.state.track.duration_ms and not self._polling:
             self._refresh_soon(300)
 
     def _image_loaded(self, url: str):
         t = self.state.track
         if t and t.image_url == url:
-            self.np.cover.set_pixmap(self.images.raw(url))
+            self.views.set_cover(self.images.raw(url))
 
     # ------------------------------------------------------------------ settings
     def open_settings(self):
         old_id = self.settings.client_id
+        old_speaker = self.settings.speaker_name
         dlg = SettingsDialog(self.settings, parent=self)
         res = dlg.exec()
         if res == SettingsDialog.LOGOUT:
@@ -613,15 +709,23 @@ class MainWindow(QWidget):
             self.speaker_id = ""
             self.say("speaker login reset: a Spotify login tab will open ♡", 6000)
             self._start_speaker()
-        elif res == SettingsDialog.DialogCode.Accepted and not self.demo:
+        elif res == SettingsDialog.DialogCode.Accepted:
+            self._apply_name()
+            if self.demo:
+                return
             if self.settings.client_id != old_id:
                 config.clear_token()
                 self._login()
-            if self.speaker.phase in (spk.MISSING, spk.ERROR, spk.OFF):
+            if self.settings.speaker_name != old_speaker and self.speaker.running:
+                self.speaker.stop()
+                self.speaker_id = ""
+                self._start_speaker()
+            elif self.speaker.phase in (spk.MISSING, spk.ERROR, spk.OFF):
                 self._start_speaker()
 
     def closeEvent(self, e):
         self._closing = True
         self.poll_timer.stop()
         self.speaker.stop()
+        self.mini.close()
         super().closeEvent(e)

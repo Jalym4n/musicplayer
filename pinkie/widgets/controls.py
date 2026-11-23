@@ -1,79 +1,12 @@
-"""Small hand-painted widgets: pixel buttons, heart sliders, scrolling titles."""
+"""Small hand-painted widgets: heart sliders and scrolling titles."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QAbstractButton, QWidget
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
+from PySide6.QtWidgets import QWidget
 
 from .. import theme
 from ..theme import C
-
-
-class PixelButton(QAbstractButton):
-    """Round candy button with a pixel icon. `checkable` buttons glow when on."""
-
-    def __init__(self, icon_name: str, diameter: int = 40, px: float = 2.5,
-                 fill: str = C.white, ink: str = C.hot, tooltip: str = "", parent=None):
-        super().__init__(parent)
-        self.icon_name, self.d, self.px = icon_name, diameter, px
-        self.fill, self.ink = fill, ink
-        self.badge = ""
-        self._hover = False
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(diameter + 6, diameter + 8)
-        if tooltip:
-            self.setToolTip(tooltip)
-
-    def set_icon(self, name: str):
-        self.icon_name = name
-        self.update()
-
-    def enterEvent(self, e):
-        self._hover = True
-        self.update()
-
-    def leaveEvent(self, e):
-        self._hover = False
-        self.update()
-
-    def sizeHint(self):
-        return QSize(self.d + 6, self.d + 8)
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        down = self.isDown()
-        on = self.isCheckable() and self.isChecked()
-        x, y = 3, 2 + (3 if down else 0)
-        r = QRectF(x, y, self.d, self.d)
-        # chunky retro drop shadow
-        if not down:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(C.shell_dark))
-            p.drawEllipse(r.translated(0, 4))
-        fill = QColor(self.ink if on else self.fill)
-        if self._hover and not on:
-            fill = QColor(C.cream)
-        p.setBrush(fill)
-        p.setPen(QPen(QColor(self.ink), 3))
-        p.drawEllipse(r)
-        # tiny shine
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(255, 255, 255, 170))
-        p.drawEllipse(QRectF(r.x() + self.d * .2, r.y() + self.d * .14, self.d * .18, self.d * .12))
-        ink = C.white if on else self.ink
-        if not self.isEnabled():
-            ink = C.plum_soft
-        theme.draw_icon(p, self.icon_name, ink, r.center().x(), r.center().y(), self.px)
-        if self.badge:
-            p.setFont(theme.heading(10, True))
-            br = QRectF(r.right() - 14, r.top() - 2, 16, 16)
-            p.setBrush(QColor(C.butter))
-            p.setPen(QPen(QColor(self.ink), 2))
-            p.drawEllipse(br)
-            p.setPen(QColor(C.plum))
-            p.drawText(br, Qt.AlignmentFlag.AlignCenter, self.badge)
-        p.end()
 
 
 class HeartSlider(QWidget):
@@ -222,34 +155,3 @@ class MarqueeLabel(QWidget):
             p.drawText(QRectF(-self._offset + tw + 40, 0, tw, r.height()),
                        Qt.AlignmentFlag.AlignVCenter, self._text)
         p.end()
-
-
-def gingham(p: QPainter, rect: QRectF, cell: int = 18, base: str = C.bg,
-            band: str = C.gingham, cross: str = C.gingham_dark) -> None:
-    """Paint a soft pink gingham tablecloth pattern."""
-    p.fillRect(rect, QColor(base))
-    p.setPen(Qt.PenStyle.NoPen)
-    b1, b2 = QColor(band), QColor(cross)
-    b1.setAlpha(150)
-    b2.setAlpha(110)
-    x = rect.left()
-    while x < rect.right():
-        p.fillRect(QRectF(x, rect.top(), cell, rect.height()), b1)
-        x += cell * 2
-    y = rect.top()
-    while y < rect.bottom():
-        p.fillRect(QRectF(rect.left(), y, rect.width(), cell), b1)
-        y += cell * 2
-    x = rect.left()
-    while x < rect.right():
-        y = rect.top()
-        while y < rect.bottom():
-            p.fillRect(QRectF(x, y, cell, cell), b2)
-            y += cell * 2
-        x += cell * 2
-
-
-def rounded_path(r: QRectF, radius: float) -> QPainterPath:
-    path = QPainterPath()
-    path.addRoundedRect(r, radius, radius)
-    return path

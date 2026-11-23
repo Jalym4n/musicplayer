@@ -57,6 +57,7 @@ def parse_track(obj: dict | None) -> Track | None:
         image_url=_best_image(album.get("images")),
         duration_ms=obj.get("duration_ms") or 0,
         is_local=bool(obj.get("is_local")),
+        year=(album.get("release_date") or "")[:4],
     )
 
 
@@ -211,6 +212,11 @@ class SpotifyClient:
     # -- player ---------------------------------------------------------------------
     def playback(self) -> PlaybackState:
         return parse_playback(self._req("GET", "/me/player"))
+
+    def queue(self) -> list[Track]:
+        """What plays next (Spotify's own queue for the current session)."""
+        data = self._req("GET", "/me/player/queue") or {}
+        return [t for t in map(parse_track, data.get("queue") or []) if t][:30]
 
     def devices(self) -> list[Device]:
         data = self._req("GET", "/me/player/devices") or {}

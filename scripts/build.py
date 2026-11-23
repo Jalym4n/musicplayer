@@ -3,9 +3,9 @@
     python scripts/build.py
 
 Output:
-  Windows -> dist/Pinkie Player/Pinkie Player.exe
-  macOS   -> dist/Pinkie Player.app
-  Linux   -> dist/Pinkie Player/Pinkie Player
+  Windows -> dist/Aayusha's Music Player/Aayusha's Music Player.exe
+  macOS   -> dist/Aayusha's Music Player.app
+  Linux   -> dist/Aayusha's Music Player/Aayusha's Music Player
 
 Build on the OS you want to run it on (PyInstaller does not cross-compile).
 The built-in speaker (librespot) is compiled first if pinkie/bin/ doesn't have it.
@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+APP_BUNDLE = "Aayusha's Music Player"   # name of the .app / .exe
 ASSETS = ROOT / "pinkie" / "assets"
 
 
@@ -57,7 +58,7 @@ def main() -> int:
     sep = ";" if sys.platform == "win32" else ":"
     cmd = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
-        "--name", "Pinkie Player",
+        "--name", APP_BUNDLE,
         "--icon", str(icon),
         "--add-data", f"{ASSETS}{sep}pinkie/assets",
         "--add-binary", f"{speaker}{sep}librespot",
@@ -70,7 +71,7 @@ def main() -> int:
         str(ROOT / "run.py"),
     ]
     if sys.platform == "darwin":
-        cmd[3:3] = ["--osx-bundle-identifier", "app.pinkie.player"]
+        cmd[3:3] = ["--osx-bundle-identifier", "app.pinkie.aayusha"]
     print(" ".join(cmd))
     return subprocess.call(cmd, cwd=ROOT)
 

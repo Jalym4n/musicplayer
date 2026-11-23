@@ -7,6 +7,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from . import personal
+
 APP_NAME = "Pinkie Player"
 APP_SLUG = "pinkie-player"
 
@@ -51,9 +53,22 @@ class Settings:
     client_id: str = ""
     # Override for the built-in speaker binary (librespot). Empty = use the bundled one.
     librespot_path: str = ""
-    device_name: str = APP_NAME
+    device_name: str = ""        # empty = "<name>'s Player"
+    owner_name: str = ""         # empty = personal.NAME
+    favorites: list = field(default_factory=list)   # starred playlist ids
     poll_seconds: float = 2.5
     extra: dict = field(default_factory=dict)
+
+    @property
+    def her_name(self) -> str:
+        return (self.owner_name or personal.NAME).strip() or personal.NAME
+
+    @property
+    def speaker_name(self) -> str:
+        # Older builds saved "Pinkie Player" here; treat that as "use the default".
+        if self.device_name and self.device_name != APP_NAME:
+            return self.device_name
+        return personal.speaker_name(self.her_name)
 
     @classmethod
     def path(cls) -> Path:

@@ -39,6 +39,7 @@ class DemoClient:
                     album=f"{rnd.choice(_WORDS_B)} Vol. {album_seed % 4 + 1}",
                     image_url=f"demo:{album_seed}",
                     duration_ms=rnd.randint(140, 260) * 1000,
+                    year=str(rnd.choice([1999, 2001, 2003, 2007, 2024])),
                 ))
             self._tracks[pid] = tracks
             self._playlists.append(Playlist(
@@ -95,6 +96,12 @@ class DemoClient:
         active = next((d for d in self._devices if d.is_active), None)
         return PlaybackState(self._playing, cur, self._pos(), self._shuffle, self._repeat,
                              self._volume, active, self._context)
+
+    def queue(self):
+        if not self._queue:
+            return []
+        n = len(self._queue)
+        return [self._queue[(self._index + i) % n] for i in range(1, min(n, 12))]
 
     def devices(self):
         return list(self._devices)

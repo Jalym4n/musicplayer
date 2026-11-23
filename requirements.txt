@@ -1,3 +1,4 @@
 # Qt Essentials only: native widgets + networking, no QtWebEngine/Chromium included.
 PySide6-Essentials>=6.8,<7
 requests>=2.31
+pyobjc-framework-MediaPlayer>=10.3; sys_platform == "darwin"   # media keys / Now Playing

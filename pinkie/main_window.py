@@ -1,6 +1,7 @@
 """The main window and the logic that ties the UI to Spotify."""
 from __future__ import annotations
 
+import dataclasses
 import random
 import time
 import webbrowser
@@ -16,6 +17,7 @@ from . import speaker as spk
 from .auth import AuthError, TokenManager, login
 from .images import ImageLoader
 from .models import Device, PlaybackState, Playlist, Track
+from .nowplaying import NowPlayingBridge
 from .spotify import NoActiveDevice, SpotifyClient, SpotifyError
 from .theme import C
 from .widgets.deck import Deck
@@ -87,6 +89,9 @@ class MainWindow(QWidget):
         self._vol_touched = 0.0
         self._last_track_uri = None
         self._closing = False
+        self._live = False            # Soloist is pushing live playback events
+        self._live_queue = False      # ...including the queue
+        self._years: dict[str, str] = {}   # release years from the Web API (Soloist has none)
 
         self.title_text = personal.title(settings.her_name)
         self.setWindowTitle(self.title_text)
@@ -158,7 +163,15 @@ class MainWindow(QWidget):
         outer.addLayout(body, 1)
 
         self.mini = MiniPlayer()
-        self.views = Fanout(self.deck, self.mini)
+        # media keys, AirPods buttons and the system Now Playing widget
+        self.nowplaying = NowPlayingBridge(self)
+        self.nowplaying.playPause.connect(self.toggle_play)
+        self.nowplaying.play.connect(lambda: self.state.is_playing or self.toggle_play())
+        self.nowplaying.pause.connect(lambda: self.state.is_playing and self.toggle_play())
+        self.nowplaying.nextClicked.connect(lambda: self._cmd("next"))
+        self.nowplaying.prevClicked.connect(lambda: self._cmd("previous"))
+        self.nowplaying.seekTo.connect(self.seek)
+        self.views = Fanout(self.deck, self.mini, self.nowplaying)
         for view in (self.deck, self.mini):
             view.playPause.connect(self.toggle_play)
             view.nextClicked.connect(lambda: self._cmd("next"))
@@ -355,6 +368,8 @@ class MainWindow(QWidget):
         sp = cls(self.settings.speaker_name, self)
         sp.phaseChanged.connect(self._speaker_phase)
         sp.loginUrl.connect(self._speaker_login_url)
+        if hasattr(sp, "playerEvent"):
+            sp.playerEvent.connect(self._on_player_event)
         return sp
 
     def _start_speaker(self):
@@ -405,6 +420,46 @@ class MainWindow(QWidget):
                 self.say("one-time setup: Settings → download Soloist + add your key ♡", 9000)
             else:
                 self.say("the built-in speaker is missing: see the README ♡", 8000)
+
+    # ------------------------------------------------------------------ live events
+    def _set_live(self, on: bool):
+        """While Soloist streams events, Spotify polling only runs as a slow backup."""
+        if on == self._live:
+            return
+        self._live = on
+        if not on:
+            self._live_queue = False
+        if self.poll_timer.isActive():
+            self.poll_timer.start(15000 if on else int(self.settings.poll_seconds * 1000))
+
+    def _on_player_event(self, ev: dict):
+        kind = ev.get("type")
+        if kind == "device_changed":
+            self._set_live(bool(ev.get("is_active")))
+            if not ev.get("is_active"):
+                self._refresh_soon(200)
+            return
+        if kind == "queue_changed":
+            tracks = soloist.queue_tracks(ev)
+            self._live_queue = True
+            self.upnext_tracks = tracks
+            self.notebook.set_upnext(tracks)
+            self.notebook.upnext.tmodel.set_current(
+                self.state.track.uri if self.state.track else "")
+            return
+        if kind == "playback_state":
+            self._set_live(bool(ev.get("is_active", True)))
+        if not self._live:
+            return
+        s = dataclasses.replace(self.state)
+        s.progress_ms = self._current_pos()   # events without a position keep the clock
+        if not soloist.apply_event(s, ev):
+            return
+        if s.track and not s.track.year:
+            s.track.year = self._years.get(s.track.uri, "")
+        s.device = Device(self.speaker_id or "soloist", self.settings.speaker_name,
+                          "Computer", True, s.volume)
+        self.apply_state(s, live=True)
 
     def _speaker_login_url(self, url: str):
         self._speaker_url = url  # librespot opens the browser itself; chip click reopens
@@ -696,6 +751,21 @@ class MainWindow(QWidget):
         def done(state: PlaybackState):
             self._polling = False
             self._poll_errors = 0
+            if state.track and state.track.year:
+                self._years[state.track.uri] = state.track.year
+            moved = state.device and state.device.id and self.speaker_id not in (
+                "", SOLOIST_ACTIVE) and state.device.id != self.speaker_id
+            if self._live and not moved:
+                # live events are fresher; just fill in the release year for the LCD
+                cur = self.state.track
+                if cur and state.track and cur.uri == state.track.uri and not cur.year \
+                        and state.track.year:
+                    cur.year = state.track.year
+                    self.views.set_track(cur.name, cur.artists, cur.duration_ms,
+                                         self.images.raw(cur.image_url), cur.album, cur.year)
+                return
+            if moved:
+                self._set_live(False)
             self.apply_state(state)
 
         def fail(exc):
@@ -706,7 +776,7 @@ class MainWindow(QWidget):
 
         run_async(self.client.playback, on_done=done, on_error=fail)
 
-    def apply_state(self, s: PlaybackState):
+    def apply_state(self, s: PlaybackState, live: bool = False):
         if time.monotonic() - self._vol_touched < 2.5:
             s.volume = self.state.volume
         self.state = s
@@ -723,14 +793,16 @@ class MainWindow(QWidget):
             self.tracks.tmodel.set_current(uri)
             self.notebook.upnext.tmodel.set_current(uri)
             self.setWindowTitle(f"{t.name} ♡ {self.title_text}" if t else self.title_text)
-            self.refresh_queue()
+            if not (live and self._live_queue):
+                self.refresh_queue()
         self.views.set_playing(s.is_playing)
         self.heartbeat.set_playing(s.is_playing)
         self.views.set_shuffle(s.shuffle)
         self.views.set_repeat(s.repeat if s.repeat in ("off", "context", "track") else "off")
         self.views.set_volume(s.volume)
         self.views.set_progress(s.progress_ms)
-        if self.speaker_id and s.device and s.device.id and s.device.id != self.speaker_id:
+        if self.speaker_id and self.speaker_id != SOLOIST_ACTIVE and s.device and \
+                s.device.id and s.device.id != self.speaker_id:
             self.views.set_speaker("elsewhere", f"playing on {s.device.name}: tap to bring it here")
         elif self.speaker_id and self.deck.speaker_phase == "elsewhere":
             self.views.set_speaker(spk.READY, READY_TEXT)
@@ -795,5 +867,6 @@ class MainWindow(QWidget):
         self._closing = True
         self.poll_timer.stop()
         self.speaker.stop()
+        self.nowplaying.shutdown()
         self.mini.close()
         super().closeEvent(e)

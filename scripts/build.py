@@ -71,7 +71,10 @@ def main() -> int:
         str(ROOT / "run.py"),
     ]
     if sys.platform == "darwin":
-        cmd[3:3] = ["--osx-bundle-identifier", "app.pinkie.aayusha"]
+        cmd[3:3] = ["--osx-bundle-identifier", "app.pinkie.aayusha",
+                    # media keys / Now Playing (PyObjC frameworks are imported lazily)
+                    "--hidden-import", "MediaPlayer", "--hidden-import", "AppKit",
+                    "--hidden-import", "Foundation", "--collect-submodules", "MediaPlayer"]
     print(" ".join(cmd))
     return subprocess.call(cmd, cwd=ROOT)
 

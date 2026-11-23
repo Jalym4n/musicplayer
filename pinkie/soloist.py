@@ -32,6 +32,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from . import config
+from .models import PlaybackState, Track
 from .speaker import ERROR, MISSING, OFF, READY, STARTING, log_path
 
 PAIR = "pair"            # running, but needs its one-time pairing from a Spotify app
@@ -136,10 +137,112 @@ def parse_event(line: str) -> dict | None:
     return ev if isinstance(ev, dict) else None
 
 
+# --- turning Soloist's live events into the app's models ------------------------------
+_COVER_ORDER = ("large", "default", "xlarge", "small")
+
+
+def _name(entity: dict | None) -> str:
+    return (((entity or {}).get("decorations") or {}).get("identity") or {}).get("name") or ""
+
+
+def _cover(entity: dict | None) -> str:
+    covers = (((entity or {}).get("decorations") or {}).get("visual_identity") or {}).get("cover") or []
+    by_size = {c.get("size"): c.get("url") for c in covers if c.get("url")}
+    url = next((by_size[k] for k in _COVER_ORDER if by_size.get(k)), "")
+    if url.startswith("spotify:image:"):
+        url = "https://i.scdn.co/image/" + url.rsplit(":", 1)[1]
+    return url
+
+
+def entity_track(entity: dict | None) -> Track | None:
+    """A Soloist Entity (track / episode) as a Track."""
+    if not entity or not entity.get("uri") or entity.get("entity_type") not in ("track", "episode"):
+        return None
+    dec = entity.get("decorations") or {}
+    parent = (dec.get("parent") or {}).get("entity") or {}
+    artists = ", ".join(n for n in (_name(c) for c in dec.get("creators") or []) if n)
+    uri = entity["uri"]
+    return Track(id=uri.rsplit(":", 1)[-1], uri=uri, name=_name(entity) or "Untitled",
+                 artists=artists or _name(parent) or "Unknown", album=_name(parent),
+                 image_url=_cover(entity) or _cover(parent),
+                 duration_ms=int((dec.get("playback") or {}).get("duration_ms") or 0))
+
+
+def position_now(position: dict | None) -> int:
+    """Current position from a {position_ms, timestamp_ms, speed} anchor."""
+    if not position:
+        return 0
+    pos = float(position.get("position_ms") or 0)
+    speed = float(position.get("speed") or 0)
+    ts = position.get("timestamp_ms")
+    if ts and speed:
+        pos += max(0.0, time.time() * 1000 - float(ts)) * speed
+    return int(pos)
+
+
+def apply_event(state: PlaybackState, ev: dict) -> bool:
+    """Update `state` in place from one Soloist event. Returns True if anything changed."""
+    kind = ev.get("type")
+    if kind == "playback_state":
+        state.track = entity_track(ev.get("item")) or state.track
+        status = ev.get("status")
+        state.is_playing = status in ("playing", "buffering")
+        state.progress_ms = position_now(ev.get("position"))
+        if isinstance(ev.get("volume"), (int, float)):
+            state.volume = int(ev["volume"])
+        opts = ev.get("options") or {}
+        state.shuffle = bool(opts.get("shuffle", state.shuffle))
+        state.repeat = opts.get("repeat") or state.repeat
+        ctx = ev.get("context") or {}
+        state.context_uri = ctx.get("uri") or state.context_uri
+        if status == "idle":
+            state.track, state.is_playing = None, False
+        return True
+    if kind == "track_changed":
+        t = entity_track(ev.get("item"))
+        if t:
+            state.track = t
+            state.progress_ms = 0
+            return True
+        return False
+    if kind == "playback_changed":
+        state.is_playing = ev.get("status") in ("playing", "buffering")
+        return True
+    if kind == "position_sync":
+        state.progress_ms = position_now(ev.get("position"))
+        speed = (ev.get("position") or {}).get("speed")
+        if speed is not None:
+            state.is_playing = float(speed) > 0
+        return True
+    if kind == "volume_changed" and isinstance(ev.get("volume"), (int, float)):
+        state.volume = int(ev["volume"])
+        return True
+    if kind == "options_changed":
+        opts = ev.get("options") or {}
+        state.shuffle = bool(opts.get("shuffle", state.shuffle))
+        state.repeat = opts.get("repeat") or state.repeat
+        return True
+    if kind == "context_changed":
+        state.context_uri = (ev.get("context") or {}).get("uri") or state.context_uri
+        return True
+    return False
+
+
+def queue_tracks(ev: dict) -> list[Track]:
+    """Upcoming songs from a queue_changed event (next first)."""
+    out = []
+    for entry in ev.get("upcoming") or []:
+        t = entity_track(entry.get("item"))
+        if t:
+            out.append(t)
+    return out
+
+
 class SoloistSpeaker(QObject):
     """Runs Soloist in the background. Same signals and phases as speaker.Speaker."""
     phaseChanged = Signal(str, str)
     loginUrl = Signal(str)   # unused (Soloist pairs through a Spotify app), kept for parity
+    playerEvent = Signal(dict)   # playback_state, track_changed, position_sync, ...
 
     MAX_FAILURES = 3
     engine = "soloist"
@@ -158,6 +261,7 @@ class SoloistSpeaker(QObject):
         self._started_at = 0.0
         self._tail: list[str] = []
         self._status_proc: QProcess | None = None
+        self._buf = ""
         self._status = QTimer(self)
         self._status.timeout.connect(self._check_status)
 
@@ -260,6 +364,7 @@ class SoloistSpeaker(QObject):
             return  # daemon hasn't opened its local API yet
         p = QProcess(self)
         p.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        self._buf = ""
         p.readyReadStandardOutput.connect(lambda: self._trace_read(p))
         self._status_proc = p
         p.start(self.binary, ["ctl", "trace", "--data-dir", str(data_dir())])
@@ -268,10 +373,14 @@ class SoloistSpeaker(QObject):
         return f"pair once: on your phone open Spotify \u2192 devices \u2192 {self.name}"
 
     def _trace_read(self, p: QProcess) -> None:
-        text = bytes(p.readAllStandardOutput()).decode("utf-8", "replace")
-        for line in text.splitlines():
+        self._buf += bytes(p.readAllStandardOutput()).decode("utf-8", "replace")
+        *lines, self._buf = self._buf.split("\n")
+        for line in lines:
             ev = parse_event(line)
-            if not ev or ev.get("type") != "auth_state" or not self.running:
+            if not ev or not self.running:
+                continue
+            if ev.get("type") != "auth_state":
+                self.playerEvent.emit(ev)   # live playback updates for the UI
                 continue
             if ev.get("logged_in"):
                 self._failures = 0

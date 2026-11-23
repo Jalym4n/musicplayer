@@ -68,6 +68,10 @@ jobs:
           test -n "$bin"
           "$bin" --version
 
+      - name: Smoke test media keys (macOS)
+        if: runner.os == 'macOS'
+        run: '"dist/$APP.app/Contents/MacOS/$APP" --check-media-keys'
+
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: ditto -c -k --keepParent "dist/$APP.app" "${{ matrix.artifact }}.zip"

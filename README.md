@@ -40,6 +40,12 @@ comes out of your speakers. If you start music on your phone, the pill says so. 
   drawn with the computer's own emoji font, so on her Mac it's Apple's otter
 - **Mini-Player** (title bar button or Ctrl+M): a tiny always-on-top window with the
   cover, title and controls
+- **Media keys (Mac):** the keyboard's ⏯ ⏭ ⏮ keys, AirPods/headphone taps, and the
+  Control Center / menu-bar **Now Playing** widget (with the album cover) all control the
+  app. Not on Windows/Linux yet
+- **Instant updates with Soloist:** song changes, pause, seek, volume and the queue arrive
+  live from Soloist, so the screen reacts immediately; Spotify is only checked every 15 s
+  as a backup
 - **UP NEXT** notebook showing Spotify's queue (double-click to jump to a song)
 - **Favorites:** right-click a playlist → "add to favorites" pins it in its own section
 
@@ -161,6 +167,7 @@ Your Client ID runs in Spotify's **Development Mode**, which is meant for person
 | Speaker pill says **pair once from your phone** | Phone on the same Wi-Fi → Spotify → devices icon → **Aayusha's Player** |
 | Log shows `error audio key 0 1` | Spotify blocks librespot for this account. Set up Soloist (Step 3); the app switches by itself |
 | Pill says the Soloist build **expired** | Settings → **update Soloist** |
+| Media keys control Apple Music / Spotify instead | Quit those apps (macOS sends the keys to whichever app last played), then press play in the app once |
 | Speaker panel says **no sound output found** | Plug in or switch on speakers/headphones, then tap the panel to restart the speaker |
 | Speaker panel says **speaker login** | Finish the Spotify tab that opened. Tap the panel to open it again |
 | Speaker panel shows **speaker trouble**, or keeps saying "warming up" / "restarting" | Settings (gear) → **reset speaker login**, then approve the Spotify tab. Still stuck? Settings → **open speaker log** and send the last 30 lines |
@@ -184,7 +191,8 @@ pinkie/
   personal.py       her name + the otter's sweet notes
   main_window.py    window + logic tying the UI to Spotify
   speaker.py        librespot speaker: runs it, handles its login and restarts
-  soloist.py        Spotify Soloist speaker: download from Spotify, pairing, control
+  soloist.py        Spotify Soloist speaker: download from Spotify, pairing, live events
+  nowplaying.py     media keys + macOS Now Playing widget
   auth.py           Spotify PKCE login (no client secret) + token refresh
   spotify.py        Web API client (2026 Development Mode endpoints)
   demo.py           offline fake Spotify for --demo

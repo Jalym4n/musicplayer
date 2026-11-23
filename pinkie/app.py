@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pinkie", description="Pinkie Player")
     ap.add_argument("--demo", action="store_true", help="preview with fake music, no login")
     ap.add_argument("--screenshot", metavar="PNG", help=argparse.SUPPRESS)
+    ap.add_argument("--check-media-keys", action="store_true",
+                    help="check that media keys / Now Playing can be used, then exit")
     ap.add_argument("--check-speaker", action="store_true",
                     help="print where the built-in speaker (librespot) is and exit")
     args = ap.parse_args(argv)
@@ -48,6 +50,15 @@ def main(argv: list[str] | None = None) -> int:
     theme.load_fonts()
     app.setFont(theme.body(20))
     app.setStyleSheet(theme.stylesheet())
+
+    if args.check_media_keys:
+        from .nowplaying import NowPlayingBridge
+        bridge = NowPlayingBridge()
+        print(f"media keys: {'ready' if bridge.available else 'not available'} ({bridge.reason})")
+        if bridge.available:
+            bridge.set_track("test", "test", 1000, None)
+            bridge.shutdown()
+        return 0 if bridge.available or sys.platform != "darwin" else 1
 
     from .main_window import MainWindow
     win = MainWindow(config.Settings.load(), demo=args.demo)

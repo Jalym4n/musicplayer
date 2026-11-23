@@ -6,8 +6,9 @@ import random
 import time
 import webbrowser
 
-from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPen, QShortcut
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QTimer
+from PySide6.QtGui import (QColor, QGuiApplication, QKeySequence, QLinearGradient, QPainter,
+                           QPen, QShortcut)
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QSizeGrip,
                                QVBoxLayout, QWidget)
 
@@ -162,7 +163,12 @@ class MainWindow(QWidget):
         body.addLayout(right)
         outer.addLayout(body, 1)
 
-        self.mini = MiniPlayer()
+        self.mini = MiniPlayer(self.settings.mini_style, self.settings.mini_on_top,
+                               self.settings.mini_on_minimize)
+        self._mini_auto = False       # opened by itself because the big window was minimized
+        self._mini_save = QTimer(self)
+        self._mini_save.setSingleShot(True)
+        self._mini_save.timeout.connect(self._save_mini)
         # media keys, AirPods buttons and the system Now Playing widget
         self.nowplaying = NowPlayingBridge(self)
         self.nowplaying.playPause.connect(self.toggle_play)
@@ -182,6 +188,12 @@ class MainWindow(QWidget):
         self.deck.volumeTo.connect(self.set_volume)
         self.deck.speakerClicked.connect(self._speaker_clicked)
         self.mini.restoreMain.connect(self.restore_from_mini)
+        self.mini.shuffleToggled.connect(self.set_shuffle)
+        self.mini.repeatClicked.connect(self.cycle_repeat)
+        self.mini.volumeTo.connect(self.set_volume)
+        self.mini.prefsChanged.connect(self._save_mini)
+        self.mini.moved.connect(lambda: self._mini_save.start(600))
+        self.mini.shownChanged.connect(lambda shown: self._save_mini())
 
         self.toast = QLabel(self)
         self.toast.setFont(theme.heading(14))
@@ -255,18 +267,55 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ mini-player
     def toggle_mini(self):
         if self.mini.isVisible():
-            self.mini.hide()
-            return
-        geo = self.frameGeometry()
-        self.mini.move(geo.right() - self.mini.width() - 20, geo.bottom() - self.mini.height() - 20)
+            self.mini.close_by_user()
+        else:
+            self.show_mini()
+
+    def show_mini(self, auto: bool = False):
+        """Open the Mini-Player where she last left it (or bottom-right of the big one)."""
+        self._mini_auto = auto
+        pos = self.settings.mini_pos
+        if len(pos) == 2 and QGuiApplication.screenAt(QPoint(int(pos[0]) + 40, int(pos[1]) + 20)):
+            self.mini.move(int(pos[0]), int(pos[1]))
+        else:
+            geo = self.frameGeometry()
+            self.mini.move(geo.right() - self.mini.width() - 20,
+                           geo.bottom() - self.mini.height() - 20)
         self.mini.show()
         self.mini.raise_()
+        if not auto:
+            self._save_mini()
+
+    def _save_mini(self):
+        s = self.settings
+        s.mini_style, s.mini_on_top = self.mini.style_name, self.mini.on_top
+        s.mini_on_minimize = self.mini.on_minimize
+        if self.mini.isVisible():
+            p = self.mini.pos()
+            s.mini_pos = [p.x(), p.y()]
+        if not self._mini_auto:
+            s.mini_open = self.mini.isVisible()
+        s.save()
 
     def restore_from_mini(self):
+        self._mini_auto = False
         self.mini.hide()
+        self._save_mini()
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() != QEvent.Type.WindowStateChange:
+            return
+        if self.isMinimized():
+            if self.mini.on_minimize and not self.mini.isVisible():
+                self.show_mini(auto=True)
+        elif self._mini_auto:
+            # back from the Dock: put the auto-opened mini-player away again
+            self._mini_auto = False
+            self.mini.hide()
 
     # ------------------------------------------------------------------ toasts
     def say(self, text: str, ms: int = 3500):
@@ -330,6 +379,8 @@ class MainWindow(QWidget):
         run_async(login, cid, webbrowser.open, on_done=done, on_error=fail)
 
     def _after_login(self):
+        if self.settings.mini_open and not self.mini.isVisible():
+            QTimer.singleShot(300, self.show_mini)
         self.say(f"hi {self.settings.her_name}! {theme.OTTER}♡", 5000)
         self.refresh_playlists()
         self.sidebar.select_id("__liked")
@@ -868,5 +919,7 @@ class MainWindow(QWidget):
         self.poll_timer.stop()
         self.speaker.stop()
         self.nowplaying.shutdown()
+        if self.mini.isVisible():
+            self._save_mini()
         self.mini.close()
         super().closeEvent(e)

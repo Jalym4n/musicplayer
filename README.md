@@ -38,8 +38,12 @@ comes out of your speakers. If you start music on your phone, the pill says so. 
 - **Made for Aayusha:** her name in the title, greetings, an otter pal 🦦 with little
   notes (tap it for hearts), and an otter that swims along the progress bar. The 🦦 is
   drawn with the computer's own emoji font, so on her Mac it's Apple's otter
-- **Mini-Player** (title bar button or Ctrl+M): a tiny always-on-top window with the
-  cover, title and controls
+- **Mini-Player** (title bar button or Ctrl+M): a tiny window with the cover, title, time,
+  shuffle, previous, heart play/pause, next, repeat and volume. It stays on top, remembers
+  where she put it and whether it was open, and pops up by itself when the big window is
+  minimized. **Right-click it** to switch between the *classic* and *cassette* (spinning
+  reels) styles, or to turn "always on top" / "pop up when minimized" off. Space, ← and →
+  work while it's focused; scroll over it to change the volume
 - **Media keys (Mac):** the keyboard's ⏯ ⏭ ⏮ keys, AirPods/headphone taps, and the
   Control Center / menu-bar **Now Playing** widget (with the album cover) all control the
   app. Not on Windows/Linux yet

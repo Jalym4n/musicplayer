@@ -61,6 +61,12 @@ class Settings:
     soloist_path: str = ""        # empty = auto-detect (app folder, Homebrew, PATH)
     soloist_key: str = ""         # the user's own key from developer.spotify.com/dashboard/soloist
     librespot_blocked: bool = False   # Spotify refused song keys to librespot here
+    # Mini-Player
+    mini_open: bool = False           # reopen it on launch
+    mini_pos: list = field(default_factory=list)   # [x, y] where she last put it
+    mini_style: str = "classic"       # classic | cassette
+    mini_on_top: bool = True
+    mini_on_minimize: bool = True     # pop it up when the big window is minimized
     poll_seconds: float = 2.5
     extra: dict = field(default_factory=dict)
 

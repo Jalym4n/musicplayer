@@ -106,3 +106,42 @@ def test_blocked_librespot_switches_to_soloist(app, tmp_path, monkeypatch):
     assert win.speaker.engine == "soloist"
     assert win.speaker.phase == spk.MISSING            # asks for the one-time setup
     win.close()
+
+
+def test_mini_player_remembers_and_pops_up(app, tmp_path, monkeypatch):
+    from PySide6.QtCore import Qt
+    from pinkie.main_window import MainWindow
+    monkeypatch.setenv("PINKIE_CONFIG_DIR", str(tmp_path))
+    win = MainWindow(config.Settings(), demo=True)
+    win.show()
+    win.start()
+    pump(app, 0.5)
+    win.toggle_mini()
+    win.mini.move(123, 145)
+    win.mini.set_style("cassette")
+    win.mini.prefsChanged.emit()
+    pump(app, 0.8)
+    saved = config.Settings.load()
+    assert saved.mini_open and saved.mini_style == "cassette"
+    assert saved.mini_pos == [win.mini.pos().x(), win.mini.pos().y()]
+    # mini-player buttons drive playback too
+    win.play_row(0)
+    pump(app, 0.8)
+    win.mini.shuffleToggled.emit(True)
+    win.mini.repeatClicked.emit()
+    pump(app, 0.6)
+    assert win.state.shuffle and win.deck.repeat_mode == "context"
+    assert win.mini.b_repeat.isChecked()
+    win.mini.close_by_user()
+    assert not config.Settings.load().mini_open
+    # pops up by itself when the big window is minimized, and goes away on restore
+    win.mini.on_minimize = True
+    win.setWindowState(Qt.WindowState.WindowMinimized)
+    pump(app, 0.3)
+    if win.isMinimized():                       # some offscreen platforms ignore minimize
+        assert win.mini.isVisible() and win._mini_auto
+        win.setWindowState(Qt.WindowState.WindowNoState)
+        pump(app, 0.3)
+        assert not win.mini.isVisible()
+        assert not config.Settings.load().mini_open   # auto pop-ups aren't remembered
+    win.close()

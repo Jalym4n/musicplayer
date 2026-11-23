@@ -7,6 +7,11 @@ on:
     branches: [main, "claude/**"]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a public release with this tag (e.g. v1.0.0). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -93,10 +98,41 @@ jobs:
             ${{ matrix.artifact }}.tar.gz
           if-no-files-found: error
 
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
+  # One job publishes the release after all three builds pass, so anyone can download
+  # the apps from the repo's Releases page without a GitHub account.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ matrix.artifact }}.zip
-            ${{ matrix.artifact }}.tar.gz
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: "Aayusha's Music Player ${{ inputs.release_tag || github.ref_name }}"
+          make_latest: true
+          files: out/*
+          body: |
+            ✨ Aayusha's Music Player 🦦 ✨
+
+            **Mac (Apple Silicon):** download `AayushaMusicPlayer-macOS.zip`, unzip it, drag
+            **Aayusha's Music Player.app** into Applications, then run once in Terminal:
+
+            ```
+            xattr -dr com.apple.quarantine "/Applications/Aayusha's Music Player.app"
+            ```
+
+            **Windows:** download `AayushaMusicPlayer-Windows.zip`, unzip, run the `.exe`
+            (SmartScreen: More info → Run anyway).
+
+            **Linux:** download `AayushaMusicPlayer-Linux.tar.gz`, extract, run the app.
+
+            First launch: paste the Spotify Client ID, then Settings → get my key (Soloist) →
+            download Soloist from Spotify → save, and pick "Aayusha's Player" once in the
+            Spotify app on your phone. Full guide: see the README.

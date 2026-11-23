@@ -76,12 +76,11 @@ Spotify requires every app to have a **Client ID**:
 5. Open the app's **Settings** and copy the **Client ID**. You don't need the client secret.
 
 ### Step 2, option A: Download the ready-made app (easiest)
-Every push to this repo builds the app for Windows, macOS and Linux with GitHub Actions,
-with the speaker already inside:
+No GitHub account needed:
 
-1. Open the repo's **Actions** tab → **Build Aayusha's Music Player** → the latest green run.
-2. Under **Artifacts**, download `AayushaMusicPlayer-Windows`, `AayushaMusicPlayer-macOS` or
-   `AayushaMusicPlayer-Linux` and unzip it.
+1. Open **[the latest release](https://github.com/Jalym4n/musicplayer/releases/latest)**.
+2. Under **Assets**, download `AayushaMusicPlayer-macOS.zip`, `AayushaMusicPlayer-Windows.zip`
+   or `AayushaMusicPlayer-Linux.tar.gz` and unzip it.
 3. Open it:
    - **Windows:** run `Aayusha's Music Player.exe` inside the folder. If SmartScreen warns, click
      **More info → Run anyway**.
@@ -137,6 +136,10 @@ You stay logged in after that, so later launches go straight to your music.
 
 **Soloist updates:** Spotify's Soloist builds stop working 90 days after they're made.
 When that happens the pill says the build expired. Open Settings → **update Soloist**.
+
+**Publishing a new release** (after changes): repo → **Actions** → **Build Aayusha's Music
+Player** → **Run workflow**, type a new tag like `v1.1.0` in "release_tag", and run it.
+(Every push also builds test copies under that run's **Artifacts**, for signed-in users.)
 
 ## Personalizing
 

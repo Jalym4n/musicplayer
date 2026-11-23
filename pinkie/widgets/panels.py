@@ -130,7 +130,7 @@ class TitleBar(QWidget):
 class SpeakerChip(QWidget):
     """Status pill for the built-in speaker: a blinking light plus a short message."""
     clicked = Signal()
-    COLORS = {"ready": C.mint, "starting": C.butter, "login": C.lavender,
+    COLORS = {"ready": C.mint, "starting": C.butter, "login": C.lavender, "pair": C.lavender,
               "elsewhere": C.butter, "error": C.hot, "missing": C.hot,
               "off": C.plum_soft}
 
@@ -151,7 +151,7 @@ class SpeakerChip(QWidget):
         self.update()
 
     def _tick(self):
-        if self.phase in ("starting", "login", "elsewhere"):
+        if self.phase in ("starting", "login", "pair", "elsewhere"):
             self._blink = not self._blink
             self.update()
         elif not self._blink:
@@ -176,7 +176,8 @@ class SpeakerChip(QWidget):
         p.setPen(QPen(QColor(C.plum), 1.5))
         p.drawEllipse(QPointF(r.left() + 16, r.center().y()), 6, 6)
         title = {"ready": "playing on this computer", "elsewhere": "playing elsewhere",
-                 "login": "speaker login", "missing": "speaker missing",
+                 "login": "speaker login", "pair": "pair once from your phone",
+                 "missing": "speaker setup needed",
                  "error": "speaker trouble", "off": "speaker off"}.get(self.phase,
                                                                       "speaker warming up")
         tx = r.left() + 30

@@ -118,6 +118,10 @@ _AUTH_FAIL = re.compile(r"(BadCredentials|bad credentials|Invalid Credentials|"
 _NO_AUDIO = re.compile(r"(mk_rodio|NoDeviceAvailable|DeviceNotAvailable|"
                        r"no output device|Unable to open audio)", re.I)
 _AUTH_OK = re.compile(r"Authenticated as", re.I)
+# Spotify refuses song decryption keys to librespot for many (mostly newer) accounts.
+_KEY_REFUSED = re.compile(r"error audio key|audio key error", re.I)
+BLOCKED_TEXT = ("Spotify won't let the open-source speaker play songs on this account. "
+                "Set up Spotify Soloist in Settings \u2661")
 _URL = re.compile(r"https://accounts\.spotify\.com/\S+")
 _NOISE = re.compile(r"^\s*(\d+:|at |note:|stack backtrace)", re.I)
 
@@ -127,6 +131,7 @@ class Speaker(QObject):
     loginUrl = Signal(str)
 
     MAX_FAILURES = 3
+    engine = "librespot"
 
     def __init__(self, name: str = config.APP_NAME, parent=None):
         super().__init__(parent)
@@ -139,13 +144,15 @@ class Speaker(QObject):
         self._ready_at = 0.0
         self._tail: list[str] = []
         self._stopping = False
+        self.blocked = False         # Spotify refused song keys for this account
+        self._key_errors = 0
 
     # -- public -----------------------------------------------------------------------
     @property
     def running(self) -> bool:
         return self.proc is not None and self.proc.state() != QProcess.ProcessState.NotRunning
 
-    def start(self, binary: str) -> None:
+    def start(self, binary: str, key: str = "") -> None:
         self.binary = binary
         if not binary:
             self._set(MISSING, "the built-in speaker (librespot) isn't installed")
@@ -155,6 +162,7 @@ class Speaker(QObject):
         if drop_stale_login():
             self._log("removed an old saved speaker login; a fresh login is needed")
         self._failures = 0
+        self.blocked = False
         self._launch()
 
     def restart(self) -> None:
@@ -191,6 +199,7 @@ class Speaker(QObject):
     def _launch(self) -> None:
         self._tail = []
         self._ready_at = 0.0
+        self._key_errors = 0
         try:
             if log_path().exists() and log_path().stat().st_size > LOG_MAX_BYTES:
                 log_path().unlink()
@@ -218,6 +227,14 @@ class Speaker(QObject):
                 self._ready_at = time.monotonic()
                 self._write_marker()
                 self._set(READY, "music comes out of your speakers ♡")
+            if _KEY_REFUSED.search(line):
+                self._key_errors += 1
+                if self._key_errors >= 2 and not self.blocked:
+                    self.blocked = True
+                    self._log("Spotify refused song keys for this account; stopping librespot")
+                    self._set(ERROR, BLOCKED_TEXT)
+                    self.proc.kill()
+                    return
             m = _URL.search(line)
             if m and self.phase != READY:
                 self._set(LOGIN, "one-time login for the speaker: check your browser")
@@ -243,6 +260,8 @@ class Speaker(QObject):
         self._log(f"--- speaker exited (code {code}{', crashed' if crashed else ''})")
         if self._stopping:
             self._set(OFF, "speaker off")
+            return
+        if self.blocked:
             return
         if self.phase == ERROR and self._failures >= self.MAX_FAILURES:
             return  # FailedToStart already reported

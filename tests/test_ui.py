@@ -89,3 +89,20 @@ def test_personal_name_and_speaker_name():
     s = config.Settings(owner_name="Mia")
     assert s.her_name == "Mia" and s.speaker_name == "Mia's Player"
     assert config.Settings(device_name="Pinkie Player").speaker_name == "Aayusha's Player"
+
+
+def test_blocked_librespot_switches_to_soloist(app, tmp_path, monkeypatch):
+    from pinkie import speaker as spk
+    from pinkie import soloist
+    from pinkie.main_window import MainWindow
+    monkeypatch.setenv("PINKIE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(soloist, "find_binary", lambda configured="": "")
+    win = MainWindow(config.Settings(), demo=False)
+    assert win.speaker.engine == "librespot"           # nothing set up yet
+    win.speaker.blocked = True
+    win._speaker_phase(spk.ERROR, "refused")
+    pump(app, 0.8)
+    assert win.settings.librespot_blocked
+    assert win.speaker.engine == "soloist"
+    assert win.speaker.phase == spk.MISSING            # asks for the one-time setup
+    win.close()

@@ -6,10 +6,10 @@ import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QVBoxLayout)
 
-from .. import config, theme
+from .. import config, soloist, theme
 from ..speaker import find_binary, log_path
 from ..theme import C
 
@@ -81,21 +81,60 @@ class SettingsDialog(QDialog):
         sp.setFont(theme.heading(15, True))
         sp.setStyleSheet(f"color:{C.hot};")
         lay.addWidget(sp)
-        found = find_binary(settings.librespot_path)
+        erow = QHBoxLayout()
+        erow.addWidget(QLabel("play through"))
+        self.engine = QComboBox()
+        self.engine.addItem("automatic (recommended)", "auto")
+        self.engine.addItem("Spotify Soloist (official)", "soloist")
+        self.engine.addItem("librespot (open source)", "librespot")
+        self.engine.setCurrentIndex(max(0, self.engine.findData(settings.speaker_engine)))
+        erow.addWidget(self.engine, 1)
+        lay.addLayout(erow)
+
+        sol = soloist.find_binary(settings.soloist_path)
         hint = QLabel(
-            "Music plays straight out of this computer's speakers or headphones. "
-            + ("<b>Ready ♡</b>" if found else
-               "<b>Not found.</b> Use the downloadable app, or run "
-               "<b>python scripts/build_librespot.py</b> once."))
+            "<b>Spotify Soloist</b> is Spotify's own player with no window. It works on every "
+            "account. One-time setup: download it, paste your free Soloist key, then pick "
+            f"<b>{settings.speaker_name}</b> once in the Spotify app on your phone. "
+            + ("<b>Soloist found \u2661</b>" if sol else "<b>Soloist not installed yet.</b>"))
         hint.setObjectName("hint")
         hint.setTextFormat(Qt.TextFormat.RichText)
         _wrap(hint)
         lay.addWidget(hint)
+        krow = QHBoxLayout()
+        self.sol_key = QLineEdit(settings.soloist_key)
+        self.sol_key.setPlaceholderText("Soloist key")
+        self.sol_key.setEchoMode(QLineEdit.EchoMode.PasswordEchoOnEdit)
+        b_key = QPushButton("get my key")
+        b_key.setToolTip("Opens Spotify for Developers. Log in with the Premium account.")
+        b_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(soloist.KEY_PAGE)))
+        krow.addWidget(self.sol_key, 1)
+        krow.addWidget(b_key)
+        lay.addLayout(krow)
+        drow = QHBoxLayout()
+        self.b_dl = QPushButton("update Soloist" if sol else "download Soloist from Spotify")
+        self.b_dl.setToolTip("Downloads the official build straight from Spotify's servers")
+        self.b_dl.clicked.connect(self._download_soloist)
+        self.dl_status = QLabel("")
+        self.dl_status.setObjectName("hint")
+        b_page = QPushButton("Spotify's download page")
+        b_page.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(soloist.DOWNLOADS_PAGE)))
+        drow.addWidget(self.b_dl)
+        drow.addWidget(b_page)
+        drow.addStretch(1)
+        lay.addLayout(drow)
+        lay.addWidget(self.dl_status)
+        if not soloist.build_name():
+            self.b_dl.setEnabled(False)
+            self.dl_status.setText("Soloist needs an Apple Silicon Mac, 64-bit Windows or Linux.")
+
         row = QHBoxLayout()
         self.lib_path = QLineEdit(settings.librespot_path)
+        found = find_binary(settings.librespot_path)
         self.lib_path.setPlaceholderText(found or "librespot location (advanced)")
         browse = QPushButton("browse")
         browse.clicked.connect(self._browse)
+        row.addWidget(QLabel("librespot"))
         row.addWidget(self.lib_path, 1)
         row.addWidget(browse)
         lay.addLayout(row)
@@ -139,6 +178,23 @@ class SettingsDialog(QDialog):
             path.write_text("(the speaker hasn't written anything yet)\n", "utf-8")
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
+    def _download_soloist(self):
+        from ..worker import run_async
+        self.b_dl.setEnabled(False)
+        self.dl_status.setText("downloading Spotify Soloist from Spotify \u2661 ...")
+
+        def done(path):
+            self.settings.soloist_path = ""
+            self.dl_status.setText(f"Soloist installed \u2661  ({path})")
+            self.b_dl.setText("update Soloist")
+            self.b_dl.setEnabled(True)
+
+        def fail(exc):
+            self.dl_status.setText(f"download failed: {exc}")
+            self.b_dl.setEnabled(True)
+
+        run_async(soloist.download, on_done=done, on_error=fail)
+
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "Find librespot")
         if path:
@@ -147,6 +203,8 @@ class SettingsDialog(QDialog):
     def _accept(self):
         self.settings.client_id = self.client_id.text().strip()
         self.settings.owner_name = self.owner.text().strip()
+        self.settings.speaker_engine = self.engine.currentData()
+        self.settings.soloist_key = self.sol_key.text().strip()
         self.settings.librespot_path = self.lib_path.text().strip()
         self.settings.save()
         self.accept()

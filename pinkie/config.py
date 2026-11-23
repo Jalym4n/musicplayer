@@ -56,6 +56,11 @@ class Settings:
     device_name: str = ""        # empty = "<name>'s Player"
     owner_name: str = ""         # empty = personal.NAME
     favorites: list = field(default_factory=list)   # starred playlist ids
+    # Built-in speaker: "auto" (Soloist when set up, else librespot), "soloist", "librespot"
+    speaker_engine: str = "auto"
+    soloist_path: str = ""        # empty = auto-detect (app folder, Homebrew, PATH)
+    soloist_key: str = ""         # the user's own key from developer.spotify.com/dashboard/soloist
+    librespot_blocked: bool = False   # Spotify refused song keys to librespot here
     poll_seconds: float = 2.5
     extra: dict = field(default_factory=dict)
 

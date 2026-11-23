@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QSizeGrip,
                                QVBoxLayout, QWidget)
 
 from . import config, personal, theme
+from . import soloist
 from . import speaker as spk
 from .auth import AuthError, TokenManager, login
 from .images import ImageLoader
@@ -27,6 +28,7 @@ from .worker import run_async
 
 MARGIN = 14  # transparent space around the shell for the drop shadow
 READY_TEXT = "music comes out of your speakers ♡"
+SOLOIST_ACTIVE = "soloist:active"   # Soloist is playing but isn't in the Web API device list
 
 
 class Fanout:
@@ -99,10 +101,8 @@ class MainWindow(QWidget):
 
         self.images = ImageLoader(self)
         self.images.loaded.connect(self._image_loaded)
-        self.speaker = spk.Speaker(settings.speaker_name, self)
-        self.speaker.phaseChanged.connect(self._speaker_phase)
-        self.speaker.loginUrl.connect(self._speaker_login_url)
         self._speaker_url = ""
+        self.speaker = self._make_speaker(self._engine())
         self._build()
         self._shortcuts()
 
@@ -341,14 +341,45 @@ class MainWindow(QWidget):
             self.setWindowTitle(self.title_text)
 
     # ------------------------------------------------------------------ speaker
+    def _engine(self) -> str:
+        e = self.settings.speaker_engine
+        if e in ("soloist", "librespot"):
+            return e
+        # automatic: Soloist once it's set up (or once Spotify blocked librespot here)
+        if self.settings.soloist_key or self.settings.librespot_blocked:
+            return "soloist"
+        return "librespot"
+
+    def _make_speaker(self, engine: str):
+        cls = soloist.SoloistSpeaker if engine == "soloist" else spk.Speaker
+        sp = cls(self.settings.speaker_name, self)
+        sp.phaseChanged.connect(self._speaker_phase)
+        sp.loginUrl.connect(self._speaker_login_url)
+        return sp
+
     def _start_speaker(self):
         """Start the built-in speaker so music plays straight out of this computer."""
         if self.demo:
             self.speaker_id = "dev-here"
             self.views.set_speaker(spk.READY, READY_TEXT)
             return
+        engine = self._engine()
+        if self.speaker.engine != engine:
+            self.speaker.stop()
+            self.speaker.phaseChanged.disconnect(self._speaker_phase)
+            self.speaker.deleteLater()
+            self.speaker = self._make_speaker(engine)
+            self.speaker_id = ""
         self.speaker.name = self.settings.speaker_name
-        self.speaker.start(spk.find_binary(self.settings.librespot_path))
+        if engine == "soloist":
+            self.speaker.start(soloist.find_binary(self.settings.soloist_path),
+                               self.settings.soloist_key)
+        else:
+            self.speaker.start(spk.find_binary(self.settings.librespot_path))
+
+    def _pair_hint(self) -> str:
+        return (f"one-time pairing: on your phone (same Wi-Fi) open Spotify → tap the "
+                f"devices icon → pick {self.settings.speaker_name} ♡")
 
     def _speaker_phase(self, phase: str, detail: str):
         self.views.set_speaker(phase, detail)
@@ -356,11 +387,24 @@ class MainWindow(QWidget):
             self._find_speaker()
         elif phase == spk.LOGIN:
             self.say("one quick login so this computer can play music ♡", 7000)
+        elif phase == soloist.PAIR:
+            self.speaker_id = ""
+            self.say(self._pair_hint(), 10000)
         elif phase == spk.ERROR:
             self.speaker_id = ""
+            if getattr(self.speaker, "blocked", False):
+                self.settings.librespot_blocked = True
+                self.settings.save()
+                if self.settings.speaker_engine == "auto":
+                    self.say("switching to Spotify Soloist, Spotify's own player ♡", 7000)
+                    QTimer.singleShot(400, self._start_speaker)
+                    return
             self.say(detail, 7000)
         elif phase == spk.MISSING:
-            self.say("the built-in speaker is missing: see the README ♡", 8000)
+            if self.speaker.engine == "soloist":
+                self.say("one-time setup: Settings → download Soloist + add your key ♡", 9000)
+            else:
+                self.say("the built-in speaker is missing: see the README ♡", 8000)
 
     def _speaker_login_url(self, url: str):
         self._speaker_url = url  # librespot opens the browser itself; chip click reopens
@@ -369,12 +413,14 @@ class MainWindow(QWidget):
         phase = self.speaker.phase if not self.demo else spk.READY
         if phase == spk.LOGIN and self._speaker_url:
             webbrowser.open(self._speaker_url)
+        elif phase == soloist.PAIR:
+            self.say(self._pair_hint(), 10000)
+        elif phase == spk.MISSING or getattr(self.speaker, "blocked", False):
+            self.open_settings()
         elif phase in (spk.ERROR, spk.OFF):
             self.speaker.stop()
             self.speaker_id = ""
             self._start_speaker()
-        elif phase == spk.MISSING:
-            self.open_settings()
         elif self.speaker_id and self.state.device and self.state.device.id != self.speaker_id:
             self.bring_here()
 
@@ -397,6 +443,11 @@ class MainWindow(QWidget):
                                   and self.state.is_playing):
                     # make this computer the active speaker, without blasting music
                     run_async(self.client.transfer, me.id, False, on_error=lambda e: None)
+            elif self.speaker.engine == "soloist" and attempt >= 6:
+                # Soloist is signed in but not listed by the Web API: make it the active
+                # device through its own local control instead, right before playing.
+                self._finding_speaker = False
+                self.speaker_id = SOLOIST_ACTIVE
             elif attempt < 20:
                 QTimer.singleShot(1500, lambda: self._find_speaker(attempt + 1))
             else:
@@ -416,6 +467,10 @@ class MainWindow(QWidget):
         if not self.speaker_id:
             return
         self.say("bringing the music here ♡")
+        if self.speaker_id == SOLOIST_ACTIVE:
+            run_async(self.speaker.activate, on_done=lambda _: self._refresh_soon(),
+                      on_error=self._error)
+            return
         run_async(self.client.transfer, self.speaker_id, True,
                   on_done=lambda _: self._refresh_soon(), on_error=self._error)
 
@@ -513,15 +568,25 @@ class MainWindow(QWidget):
                 self.say("the built-in speaker is missing: see the README ♡", 6000)
             elif phase == spk.LOGIN:
                 self.say("finish the one-time speaker login in your browser first ♡", 6000)
+            elif phase == soloist.PAIR:
+                self.say(self._pair_hint(), 10000)
+            elif getattr(self.speaker, "blocked", False) or (
+                    self.speaker.engine == "soloist" and phase == spk.MISSING):
+                self.say("set up Spotify Soloist in Settings first ♡", 6000)
             else:
                 self.say("the speaker is still warming up, one sec ♡")
                 self._find_speaker()
             return
-        client, device = self.client, self.speaker_id
+        client, device, speaker = self.client, self.speaker_id, self.speaker
 
         def job():
             # Always aim at our own speaker, so the sound comes out of this computer.
-            client.play(device_id=device, **kw)
+            if device == SOLOIST_ACTIVE:
+                speaker.activate()
+                time.sleep(0.6)
+                client.play(**kw)
+            else:
+                client.play(device_id=device, **kw)
 
         self.state.is_playing = True
         self.views.set_playing(True)
@@ -568,7 +633,8 @@ class MainWindow(QWidget):
             self.views.set_shuffle(shuffle)
             self.state.shuffle = shuffle
             # shuffle needs an active device; if it fails, play() still starts the music
-            run_async(client.shuffle, shuffle, self.speaker_id,
+            sid = "" if self.speaker_id == SOLOIST_ACTIVE else self.speaker_id
+            run_async(client.shuffle, shuffle, sid,
                       on_done=lambda _: go(), on_error=lambda _e: go())
         else:
             go()
@@ -696,7 +762,8 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ settings
     def open_settings(self):
         old_id = self.settings.client_id
-        old_speaker = self.settings.speaker_name
+        old_speaker = (self.settings.speaker_name, self._engine(), self.settings.soloist_key,
+                       self.settings.soloist_path)
         dlg = SettingsDialog(self.settings, parent=self)
         res = dlg.exec()
         if res == SettingsDialog.LOGOUT:
@@ -716,11 +783,12 @@ class MainWindow(QWidget):
             if self.settings.client_id != old_id:
                 config.clear_token()
                 self._login()
-            if self.settings.speaker_name != old_speaker and self.speaker.running:
+            new_speaker = (self.settings.speaker_name, self._engine(), self.settings.soloist_key,
+                           self.settings.soloist_path)
+            if new_speaker != old_speaker or self.speaker.phase in (spk.MISSING, spk.ERROR,
+                                                                    spk.OFF):
                 self.speaker.stop()
                 self.speaker_id = ""
-                self._start_speaker()
-            elif self.speaker.phase in (spk.MISSING, spk.ERROR, spk.OFF):
                 self._start_speaker()
 
     def closeEvent(self, e):

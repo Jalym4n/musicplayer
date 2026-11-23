@@ -14,20 +14,24 @@ installs only `PySide6-Essentials`, which doesn't include Qt's browser engine
 
 ## How it plays music
 
-Spotify's public API doesn't hand audio to apps, so the app has a **built-in
-speaker**: [librespot](https://github.com/librespot-org/librespot), an open-source Spotify
-player that works with Premium. It ships inside the app. When the app opens, it
-starts the speaker quietly in the background and plays every song through it.
+Spotify's public API doesn't hand audio to apps, so the app runs a **built-in speaker**
+quietly in the background and plays every song through it. Music comes straight out of
+the computer's speakers or headphones. No Spotify window, phone or browser tab is
+involved in playback. There are two speaker engines:
 
-- The speaker pill (under the volume slider) shows its status: a **mint light** means music
-  comes out of your speakers.
-- The speaker is private. It's hidden from other people on your Wi-Fi, so only your
-  account can use it.
-- If you start music on your phone, the panel says so. Tap it to **bring the music back**
-  to the computer. Pressing play in the app always plays on the computer.
+1. **Spotify Soloist (recommended).** [Soloist](https://developer.spotify.com/documentation/soloist)
+   is Spotify's own official player with no window (Apple Silicon Macs, 64-bit Windows,
+   Linux). It works on every Premium account. Spotify doesn't allow apps to bundle it, so
+   it's downloaded from Spotify with one click in Settings.
+2. **librespot (backup).** [librespot](https://github.com/librespot-org/librespot) is an
+   open-source player that ships inside the app. **Spotify now refuses it the song keys
+   for many accounts, mostly newer ones** (the log says `error audio key 0 1`, see
+   [librespot#1649](https://github.com/librespot-org/librespot/issues/1649)). When that
+   happens the app stops librespot and switches to Soloist automatically.
 
-librespot isn't made by Spotify. It's a widely used open-source project, and using it
-with your own Premium account is the same thing apps like `spotifyd` and `ncspot` do.
+The speaker pill under the volume slider shows its status: a **mint light** means music
+comes out of your speakers. If you start music on your phone, the pill says so. Tap it to
+**bring the music back** to the computer.
 
 ## Features
 
@@ -113,12 +117,20 @@ result goes in `dist/`.
 ### Step 3: First launch
 1. Paste your **Client ID** into the setup window and click **let's go!**
 2. Your browser opens the Spotify login. Approve it and close the tab.
-3. A second Spotify tab opens **once** so the built-in speaker can sign in (Spotify
-   requires its own login for it). Approve it and close the tab. The speaker panel turns
-   **mint**.
+3. Set up the speaker (Spotify Soloist), once:
+   1. Open **Settings (gear) → get my key**. Log in with the same Premium account and
+      create a **Soloist key** on that page. Copy it into the **Soloist key** box.
+   2. Click **download Soloist from Spotify**. It fetches Spotify's official build.
+      (Homebrew also works: `brew install --cask spotify-soloist`.)
+   3. Click **save**. The speaker pill says **pair once from your phone**.
+   4. On a phone on the **same Wi-Fi**, open Spotify → tap the devices icon → pick
+      **Aayusha's Player**. The pill turns **mint**. You never need the phone again.
 4. Pick a playlist and press play ♡
 
 You stay logged in after that, so later launches go straight to your music.
+
+**Soloist updates:** Spotify's Soloist builds stop working 90 days after they're made.
+When that happens the pill says the build expired. Open Settings → **update Soloist**.
 
 ## Personalizing
 
@@ -145,7 +157,10 @@ Your Client ID runs in Spotify's **Development Mode**, which is meant for person
 |---|---|
 | "INVALID_CLIENT: Invalid redirect URI" in the browser | The redirect URI in the dashboard must be exactly `http://127.0.0.1:8898/callback` |
 | "Port 8898 is busy" | Close other copies of the app and try again |
-| Speaker panel says **speaker missing** | Running from source: run `python scripts/build_librespot.py`. Or use the downloaded app |
+| Speaker pill says **speaker setup needed** | Do the Soloist setup in Step 3 (key + download) |
+| Speaker pill says **pair once from your phone** | Phone on the same Wi-Fi → Spotify → devices icon → **Aayusha's Player** |
+| Log shows `error audio key 0 1` | Spotify blocks librespot for this account. Set up Soloist (Step 3); the app switches by itself |
+| Pill says the Soloist build **expired** | Settings → **update Soloist** |
 | Speaker panel says **no sound output found** | Plug in or switch on speakers/headphones, then tap the panel to restart the speaker |
 | Speaker panel says **speaker login** | Finish the Spotify tab that opened. Tap the panel to open it again |
 | Speaker panel shows **speaker trouble**, or keeps saying "warming up" / "restarting" | Settings (gear) → **reset speaker login**, then approve the Spotify tab. Still stuck? Settings → **open speaker log** and send the last 30 lines |
@@ -168,7 +183,8 @@ pinkie/
   app.py            entry point (python -m pinkie)
   personal.py       her name + the otter's sweet notes
   main_window.py    window + logic tying the UI to Spotify
-  speaker.py        built-in speaker: runs librespot, handles its login and restarts
+  speaker.py        librespot speaker: runs it, handles its login and restarts
+  soloist.py        Spotify Soloist speaker: download from Spotify, pairing, control
   auth.py           Spotify PKCE login (no client secret) + token refresh
   spotify.py        Web API client (2026 Development Mode endpoints)
   demo.py           offline fake Spotify for --demo

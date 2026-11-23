@@ -19,7 +19,7 @@ speaker**: [librespot](https://github.com/librespot-org/librespot), an open-sour
 player that works with Premium. It ships inside the app. When the app opens, it
 starts the speaker quietly in the background and plays every song through it.
 
-- The speaker panel (bottom right) shows its status: a **mint light** means music
+- The speaker pill (under the volume slider) shows its status: a **mint light** means music
   comes out of your speakers.
 - The speaker is private. It's hidden from other people on your Wi-Fi, so only your
   account can use it.
